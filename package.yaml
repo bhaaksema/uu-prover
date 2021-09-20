@@ -1,0 +1,33 @@
+name: uu-program-verification
+version: 0.1.0.0
+github: "bhaaksema/uu-program-verification"
+
+dependencies:
+- base >= 4.7 && < 5
+- z3 >= 408.2
+- GCLparser
+
+library:
+  source-dirs: src
+
+executables:
+  uu-program-verification-exe:
+    main: Main.hs
+    source-dirs: app
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    dependencies:
+    - uu-program-verification
+
+tests:
+  uu-program-verification-test:
+    main: Spec.hs
+    source-dirs: test
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    dependencies:
+    - uu-program-verification
