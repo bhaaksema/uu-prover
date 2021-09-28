@@ -3,6 +3,7 @@ module ProgramPath where
 import Data.Maybe (fromMaybe)
 import GCLParser.GCLDatatype
 import GCLParser.Parser (ParseResult, parseGCLfile)
+import WLP (evalExpr, evalStmt)
 import Z3.Monad
 
 data ProgramPath a
@@ -135,11 +136,41 @@ __printTree (TreePath cond tStmts option1 option2) depth k = tabs ++ show tStmts
     remDepth = depth - baseDepth
     tabs = replicate (k - depth) '\t' --Tabs for same level
 
+--Transform conditions from Expr to Z3 AST
+treeExprToZ3 :: ProgramPath Expr -> ProgramPath (Z3 AST)
+treeExprToZ3 tree = convertTreeCond tree evalExpr
+
+convertTreeCond :: ProgramPath a -> (a -> b) -> ProgramPath b
+convertTreeCond (TreePath cond stmts option1 option2) convert = TreePath (convert cond) stmts (convertTreeCond option1 convert) (convertTreeCond option2 convert)
+convertTreeCond (LinearPath cond stmts) convert = LinearPath (convert cond) stmts
+convertTreeCond (EmptyPath cond) convert = EmptyPath (convert cond)
+convertTreeCond InvalidPath _ = InvalidPath
+
+evaluateFullTree :: MonadZ3 z3 => ProgramPath (z3 AST) -> z3 AST
+evaluateFullTree (TreePath cond stmts option1 option2) = do
+  z3Stmts <- maybe mkTrue evalStmt stmts
+  z31 <- evaluateFullTree option1
+  z32 <- evaluateFullTree option2
+  z3cond <- cond
+  and <- mkAnd [z3Stmts, z31, z32]
+  mkImplies z3cond and
+evaluateFullTree (LinearPath cond stmts) = do
+  z3cond <- cond
+  z3Stmts <- evalStmt stmts
+  mkImplies z3cond z3Stmts
+evaluateFullTree (EmptyPath cond) = cond
+evaluateFullTree InvalidPath = mkFalse
+
 -- main loads the file and puts the ParseResult Program through the following functions
 run = do
-  program <- parseGCLfile "min.gcl"
+  program <- parseGCLfile "test/input/min.gcl"
   let k = 10
   evaluateProgram program k
+
+verifyTree :: ProgramPath (Z3 AST) -> IO Result
+verifyTree tree = evalZ3 $ do
+  assert =<< evaluateFullTree tree
+  check
 
 evaluateProgram (Left _) k = putStrLn "Unable to parse program"
 evaluateProgram (Right program) k = do
@@ -152,5 +183,10 @@ evaluateProgram (Right program) k = do
   let clearedPath = removePaths path k
   print (totalDepth clearedPath k)
   putStrLn (printTree clearedPath k)
+
+  let z3Path = treeExprToZ3 clearedPath
+  result <- verifyTree z3Path
+  print "All paths satisfiable?"
+  print result
 
 --print (constructPath <$> program)
