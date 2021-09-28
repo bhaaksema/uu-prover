@@ -1,9 +1,9 @@
 module Main where
 
 import Lib
-import POC
+import POC (run)
 
---main :: IO () --Removed because POC.run has different type
+main :: IO ()
 main = do
   r <- run
   print r

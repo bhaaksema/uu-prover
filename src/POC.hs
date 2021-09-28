@@ -1,15 +1,11 @@
 module POC where
 
-import Control.Applicative
-import Control.Monad (join)
-import Data.Either
-import Data.Maybe
-import qualified Data.Traversable as T
 import GCLParser.GCLDatatype
-import GCLParser.Parser
+import GCLParser.Parser (ParseResult, parseGCLfile)
 import Z3.Monad
 
 -- main loads the file and puts the ParseResult Program through the following functions
+run :: IO Result
 run = do
   program <- parseGCLfile "min.gcl"
   checkProgram program
@@ -22,8 +18,8 @@ checkProgram program = evalZ3 $ do
   assert =<< evalProgram program
   check
 
-evalProgram :: MonadZ3 z5 => ParseResult Program -> z5 AST
-evalProgram (Left p) = mkFalse --Parse error: let check always fail
+evalProgram :: MonadZ3 z3 => ParseResult Program -> z3 AST
+evalProgram (Left e) = mkFalse --Parse error: let check always fail
 evalProgram (Right p) = evalStmt (stmt p) mkTrue --Return wlp over all statements
 
 --evalStmt basically calculates wlp
