@@ -48,6 +48,7 @@ combinePaths :: ProgramPath Expr -> ProgramPath Expr -> ProgramPath Expr
 combinePaths (LinearPath condA stmtA) (LinearPath condB stmtB) = LinearPath (BinopExpr And condA condB) (Seq stmtA stmtB)
 combinePaths (LinearPath condA lin) (TreePath condB tStmts option1 option2) = TreePath (BinopExpr And condA condB) newStmts option1 option2 where newStmts = maybe (Just lin) (Just . Seq lin) tStmts
 combinePaths (TreePath cond tStmts option1 option2) linpath@LinearPath {} = TreePath cond tStmts (combinePaths option1 linpath) (combinePaths option2 linpath)
+combinePaths (TreePath cond tStmts option1 option2) treepath@TreePath {} = TreePath cond tStmts (combinePaths option1 treepath) (combinePaths option2 treepath)
 combinePaths (EmptyPath cond) otherPath = injectExpression cond otherPath
 combinePaths otherPath empty@(EmptyPath cond) = combinePaths empty otherPath
 combinePaths _ _ = InvalidPath
