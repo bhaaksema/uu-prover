@@ -5,7 +5,7 @@ cabal-version: 1.12
 -- see: https://github.com/sol/hpack
 
 name:           uu-program-verification
-version:        0.1.0.0
+version:        21.10
 homepage:       https://github.com/bhaaksema/uu-program-verification#readme
 bug-reports:    https://github.com/bhaaksema/uu-program-verification/issues
 build-type:     Simple
@@ -16,7 +16,7 @@ source-repository head
 
 library
   exposed-modules:
-      Lib
+      WLP
   other-modules:
       Paths_uu_program_verification
   hs-source-dirs:
