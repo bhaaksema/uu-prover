@@ -14,17 +14,17 @@ evalProgram :: MonadZ3 z3 => ParseResult Program -> z3 AST
 evalProgram (Right prog) = evalStmt (stmt prog)
 evalProgram (Left err) = mkFalse
 
--- TODO: if while skip assume assign array-assign
+-- TODO: assign array-assign
 evalStmt :: MonadZ3 z3 => Stmt -> z3 AST
+evalStmt (Seq Skip stmt) = evalStmt stmt
+evalStmt (Seq (Assume expr) stmt) = do
+  ast1 <- evalExpr expr
+  ast2 <- evalStmt stmt
+  mkImplies ast1 ast2
 evalStmt (Seq stmt1 stmt2) = do
   ast1 <- evalStmt stmt1
   ast2 <- evalStmt stmt2
   mkAnd [ast1, ast2]
--- evalStmt (IfThenElse expr stmt1 stmt2) = do
---   ast1 <- evalExpr expr
---   ast2 <- evalStmt stmt1
---   ast3 <- evalStmt stmt2
---   mkIte ast1 ast2 ast3
 evalStmt (Assert expr) = evalExpr expr
 evalStmt _ = mkTrue
 
