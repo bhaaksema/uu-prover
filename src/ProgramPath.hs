@@ -171,6 +171,12 @@ countBranches _ = 0
 numInvalid :: Num p => ProgramPath a -> p
 numInvalid = foldTreeStmt (\_ prev -> prev) 0 (+ 1)
 
+-- Note that this function assumes that all ifs and whiles have been removed from the path
+countStatements :: Num p => Stmt -> p
+countStatements (Seq a b) = countStatements a + countStatements b
+countStatements (Block _ stmts) = countStatements stmts
+countStatements _ = 1
+
 --Print the whole tree for the given program path
 --Wrapper for actual function, so it wont keep evaluating the infinite structure
 printTree :: Show a => ProgramPath a -> Int -> String
@@ -199,11 +205,7 @@ __printTree (TreePath cond tStmts option1 option2) depth k = tabs ++ show tStmts
 --Wrapper for actual function, so it wont keep evaluating the infinite structure
 --Note that linear paths should be allowed to be evaluated further than depth, as otherwise we won't know if they are too long. If they are too long however the returned value will be > the given depth, so it can be derived that this path is too long
 totalDepth :: ProgramPath a -> Int -> Int
-totalDepth (LinearPath cond (Seq a b)) depth = aDepth + totalDepth (LinearPath cond b) remDepth --The length of a Seq is the length of the first statement + length of the second statement (where second statement should not be evaluated further than depth - length of first statement)
-  where
-    aDepth = totalDepth (LinearPath cond a) depth --Length of the first statement
-    remDepth = depth - aDepth --Length remaining for the second statement
-totalDepth (LinearPath _ _) depth = 1 --Depth of a single statement
+totalDepth (LinearPath _ stmts) depth = countStatements stmts --Depth of a linear path is just counting the statements statement
 totalDepth path depth --Wrapper for handeling of non-linear ProgramPath structure
   | depth <= 0 = depth --Cut off when max depth was reached
   | otherwise = _totalDepth path depth
@@ -219,7 +221,7 @@ _totalDepth linpath@LinearPath {} depth = totalDepth linpath depth --If this fun
 
 --Utility function that can check the depth of a Maybe Stmt (0 if none is present, n if there is a Stmt)
 splitDepth :: Maybe Stmt -> Int -> Int
-splitDepth tStmts depth = maybe 0 (\s -> totalDepth (LinearPath (LitB True) s) depth) tStmts
+splitDepth tStmts depth = maybe 0 countStatements tStmts
 
 --
 -- SECTION 5
@@ -281,7 +283,7 @@ evaluateProgram (Right program) k = do
   putStrLn ("Reduced structure to " ++ show (countBranches clearedPath) ++ " paths.")
   putStrLn "Evaluating this reduced structure gives:"
   putStrLn []
-  --putStrLn (printTree clearedPath k)
+  putStrLn (printTree clearedPath k)
 
   let z3Path = treeExprToZ3 clearedPath
   result <- verifyTree z3Path
