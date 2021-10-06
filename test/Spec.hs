@@ -1,2 +1,10 @@
+module Main where
+
+import GCLParser.Parser (parseGCLfile)
+import WLP (verifyProgram)
+
 main :: IO ()
-main = putStrLn "Test suite not yet implemented"
+main = do
+  program <- parseGCLfile "test/input/min.gcl"
+  result <- verifyProgram program
+  print result
