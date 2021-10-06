@@ -1,7 +1,6 @@
 // This returns the minimum of two integer. Supposedly valid.
 min(x:int, y:int | z:int) {
   z := x ;
-  if 1 < 0 then { z := y } else { assert 3 < 2 } ;
-  while true do{ z:=x-1 } ;
-  assert x = y
+  if y < x then { z := y } else { skip } ;
+  assert ((z = x) || (z = y)) && (z <= x) && (z <= y)
 }
