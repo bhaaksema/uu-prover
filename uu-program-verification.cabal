@@ -16,6 +16,7 @@ source-repository head
 
 library
   exposed-modules:
+      ProgramPath
       WLP
   other-modules:
       Paths_uu_program_verification
