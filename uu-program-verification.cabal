@@ -17,6 +17,7 @@ source-repository head
 library
   exposed-modules:
       Lib
+      POC
   other-modules:
       Paths_uu_program_verification
   hs-source-dirs:
