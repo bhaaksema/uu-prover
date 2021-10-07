@@ -258,34 +258,31 @@ splitDepth tStmts depth = maybe 0 countStatements tStmts
 -- The following functions are to transform the tree into a Z3 structure and to evaluate that structure
 --
 
-evaluateFullTree :: ProgramPath Expr -> Map String Expr -> (Expr, Map String Expr)
+evaluateFullTree :: ProgramPath Expr -> Map String Expr -> Expr
 evaluateFullTree (TreePath cond stmts option1 option2) vars = do
   let condExpr = considerExpr cond vars
-  let (_, newVars) = maybe (LitB True, vars) (\s -> wlp s (LitB True) vars) stmts
-
-  let (expr1, _) = evaluateFullTree option1 newVars
-  let (expr2, _) = evaluateFullTree option2 newVars
+  let expr1 = evaluateFullTree option1
+  let expr2 = evaluateFullTree option2
   -- Calculates the wlp over branch node statements
   -- If it has statements, runs wlp using the precondition of expr1, else just returns that precondition
-  let (path1, _) = maybe (expr1, newVars) (\s -> wlp s expr1 newVars) stmts
-  let (path2, _) = maybe (expr2, newVars) (\s -> wlp s expr2 newVars) stmts
-  let bothPaths = BinopExpr And path1 path2
+  let path1 = maybe expr1 (`wlp` expr1) stmts
+  let path2 = maybe expr2 (`wlp` expr2) stmts
+  let bothPaths = BinopExpr And (path1 vars) (path2 vars)
 
-  (simplifyExpr (BinopExpr Implication condExpr bothPaths), newVars)
+  simplifyExpr (BinopExpr Implication condExpr bothPaths)
+
 evaluateFullTree (LinearPath cond stmts) vars = do
-  let (_, newVars) = wlp stmts (LitB True) vars
-  let (z3Stmts, _) = wlp stmts (LitB True) newVars
-  let condExpr = considerExpr cond newVars
-  (simplifyExpr (BinopExpr Implication condExpr z3Stmts), newVars)
-evaluateFullTree (EmptyPath cond) v = (cond, v)
-evaluateFullTree InvalidPath v = (LitB False, v)
+  let path = wlp stmts (\v -> LitB True) vars
+  let condExpr = considerExpr cond vars
+  simplifyExpr (BinopExpr Implication condExpr path)
+evaluateFullTree (EmptyPath cond) v = cond
+evaluateFullTree InvalidPath v = LitB False
 
 -- Calculates the WLP over a program path
-calcWLP :: ProgramPath Expr -> Map String Expr -> (Expr, Map String Expr)
+calcWLP :: ProgramPath Expr -> Map String Expr -> Expr
 calcWLP tree vars = do
-  let (_, vars') = evaluateFullTree tree vars
-  let (z3tree, _) = evaluateFullTree tree vars'
-  (simplifyExpr z3tree, vars')
+  let z3tree = evaluateFullTree tree vars
+  simplifyExpr z3tree
 
 -- Outputs if an expression can be contradicted. If so, also outputs how
 verifyExpr :: Expr -> (Map String Expr, Map String Type) -> IO ()
@@ -405,14 +402,14 @@ evaluateProgram (Right program) (k, file, printWlp, printPath) = do
   let (vars, varTypes) = foldl addExprVariable (empty, empty) (input program ++ output program ++ locVars)
 
   -- Calculate the wlp and initial variable values over the tree
-  let (wlp, vars') = calcWLP clearedPath vars
+  let wlp = calcWLP clearedPath vars
   putStrLn "All defined variables are are:"
   print (keys vars)
-  putStrLn "Initial variable values are:"
-  print (toList vars')
+  --putStrLn "Initial variable values are:"
+  --print (toList vars')
   putStrLn "Z3 variables that will be created created to solve:"
   print $
-    mutatedVariables vars'
+    mutatedVariables vars
   putStrLn []
 
   putStrLn $
@@ -422,11 +419,11 @@ evaluateProgram (Right program) (k, file, printWlp, printPath) = do
   when printWlp $ putStrLn "The WLP is:"
   when printWlp $ print wlp
   when printWlp $ putStrLn "The corresponding z3 scripts is:"
-  script <- evalZ3 $ astToString =<< z3Script (OpNeg wlp) (vars', varTypes)
+  script <- evalZ3 $ astToString =<< z3Script (OpNeg wlp) (vars, varTypes)
   when printWlp $ putStrLn script
   putStrLn []
 
   -- Print the result of the verification
-  verifyExpr (OpNeg wlp) (vars', varTypes)
+  verifyExpr (OpNeg wlp) (vars, varTypes)
 
 --print path

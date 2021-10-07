@@ -6,23 +6,22 @@ import GCLParser.Parser (ParseResult)
 import GHC.ResponseFile (expandResponse)
 import Z3.Monad
 
-wlp :: Stmt -> Expr -> Map String Expr -> (Expr, Map String Expr)
-wlp (Assert expr) q vars = (BinopExpr And (considerExpr expr vars) q, vars)
-wlp (Assume expr) q vars = (BinopExpr Implication (Parens (considerExpr expr vars)) (Parens q), vars)
-wlp Skip q vars = (q, vars)
+wlp :: Stmt -> (Map String Expr -> Expr) -> Map String Expr -> Expr
+wlp (Assert expr) q vars = BinopExpr And (considerExpr expr vars) (q vars)
+wlp (Assume expr) q vars = BinopExpr Implication (Parens (considerExpr expr vars)) (Parens (q vars))
+wlp Skip q vars = q vars
 wlp (Seq stmt1 stmt2) q vars = do
-  let (_, stmt1Vars) = wlp stmt1 (LitB True) vars
-  let (stmt2Ast, stmt2Vars) = wlp stmt2 q stmt1Vars
-  let (w, _) = wlp stmt1 stmt2Ast vars
-  (w, stmt2Vars)
+  let stmt2Q = wlp stmt2 q
+  let stmt1Q = wlp stmt1 stmt2Q
+  stmt1Q vars
 wlp (Assign name expr) q vars = do
   let value = considerExpr expr vars
-  (q, insert name value vars)
+  q (insert name value vars)
 wlp (AAssign name indexE expr) q vars = do
   let array = vars ! name
   let value = considerExpr expr vars
   let index = considerExpr indexE vars
-  (q, insert name (RepBy array index value) vars)
+  q (insert name (RepBy array index value) vars)
 wlp s _ _ = error ("Unknown statement '" ++ show s ++ "'")
 
 --Returns a list of all variables declared in the program
