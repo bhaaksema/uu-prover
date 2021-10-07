@@ -6,13 +6,6 @@ import GCLParser.Parser (ParseResult)
 import GHC.ResponseFile (expandResponse)
 import Z3.Monad
 
--- Adds a variable to the given environment
-evalVarDecl :: Map String (Z3 AST) -> VarDeclaration -> Map String (Z3 AST)
-evalVarDecl map (VarDeclaration name (PType PTBool)) = insert name (mkFreshBoolVar name) map
-evalVarDecl map (VarDeclaration name (PType PTInt)) = insert name (mkFreshIntVar name) map
-evalVarDecl map (VarDeclaration name _) = insert name mkTrue map --TODO, implement for arrays
-
--- TODO: assign array-assign
 wlp :: Stmt -> Expr -> Map String Expr -> (Expr, Map String Expr)
 wlp (Assert expr) q vars = (BinopExpr And (considerExpr expr vars) q, vars)
 wlp (Assume expr) q vars = (BinopExpr Implication (Parens (considerExpr expr vars)) (Parens q), vars)
@@ -20,11 +13,25 @@ wlp Skip q vars = (q, vars)
 wlp (Seq stmt1 stmt2) q vars = do
   let (_, stmt1Vars) = wlp stmt1 (LitB True) vars
   let (stmt2Ast, stmt2Vars) = wlp stmt2 q stmt1Vars
-  wlp stmt1 stmt2Ast vars
+  let (w, _) = wlp stmt1 stmt2Ast vars
+  (w, stmt2Vars)
 wlp (Assign name expr) q vars = do
   let value = considerExpr expr vars
   (q, insert name value vars)
+wlp (AAssign name indexE expr) q vars = do
+  let array = vars ! name
+  let value = considerExpr expr vars
+  let index = considerExpr indexE vars
+  (q, insert name (RepBy array index value) vars)
 wlp s _ _ = error ("Unknown statement '" ++ show s ++ "'")
+
+--Returns a list of all variables declared in the program
+findLocvars :: Stmt -> [VarDeclaration]
+findLocvars (Seq stmt1 stmt2) = findLocvars stmt1 ++ findLocvars stmt2
+findLocvars (While _ stmt) = findLocvars stmt
+findLocvars (IfThenElse _ stmt1 stmt2) = findLocvars stmt1 ++ findLocvars stmt2
+findLocvars (Block vars stmt) = vars ++ findLocvars stmt
+findLocvars _ = []
 
 -- Will evaluate the expression using the given variable environment
 considerExpr :: Expr -> Map String Expr -> Expr
@@ -36,7 +43,13 @@ considerExpr' b@(LitB _) _ = b
 considerExpr' (BinopExpr binop expr1 expr2) vars = BinopExpr binop (considerExpr expr1 vars) (considerExpr expr2 vars)
 considerExpr' (OpNeg expr) vars = OpNeg (considerExpr expr vars)
 considerExpr' (Var name) vars = vars ! name
+considerExpr' (ArrayElem (Var name) index) vars = ArrayElem (vars ! name) index
 considerExpr' (Parens e) vars = considerExpr e vars
+considerExpr' (SizeOf (Var name)) vars = vars ! ("#" ++ name)
+considerExpr' (Forall locvarName expr) vars = Forall locvarName (considerExpr expr boundedVars)
+  where boundedVars = insert locvarName (Var locvarName) vars
+considerExpr' (Exists locvarName expr) vars = Exists locvarName (considerExpr expr boundedVars)
+  where boundedVars = insert locvarName (Var locvarName) vars
 considerExpr' e _ = error ("Unknown expression '" ++ show e ++ "'")
 
 -- Runs the given expression and environment map through Z3
@@ -49,17 +62,31 @@ verifyExpr expr vars = evalZ3 $ do
 convertVarMap :: MonadZ3 z3 => (Map String Expr, Map String Type) -> Map String (z3 AST)
 convertVarMap (vars, types) = z3Environment
   where
-    convert (key, Var name) 
+    convert (key, Var name)
       | key == name = (key, createVariable name (types ! name))
       | otherwise = (key, evalExpr (Var name) z3Environment)
-    convert (key, expr) = (key, evalExpr expr z3Environment)
+    convert (key, expr)
+      | types ! key == AType PTInt = convert (key, Var key)
+      | types ! key == AType PTBool = convert (key, Var key)
+      | otherwise = (key, evalExpr expr z3Environment)
     createVariable name (PType PTInt) = do
       sym <- mkStringSymbol name
       mkIntVar sym
     createVariable name (PType PTBool) = do
       sym <- mkStringSymbol name
       mkBoolVar sym
-    createVariable _ typ = error ("Cannot create variable of unknown type" ++ show typ)
+    createVariable name (AType PTBool) = do
+      iSort <- mkIntSort
+      bSort <- mkBoolSort
+      aSort <- mkArraySort iSort bSort
+      sym <- mkStringSymbol name
+      mkConst sym aSort
+    createVariable name (AType PTInt) = do
+      iSort <- mkIntSort
+      aSort <- mkArraySort iSort iSort
+      sym <- mkStringSymbol name
+      mkConst sym aSort
+    createVariable _ typ = error ("Cannot create variable of unknown type " ++ show typ)
     z3Environment = fromList (map convert (toList vars))
 
 -- TODO: size forall exists var
@@ -80,7 +107,33 @@ evalExpr' (OpNeg expr) vars = do
   mkNot ast
 evalExpr' (Var name) vars = vars ! name
 evalExpr' (Parens e) vars = evalExpr e vars
-evalExpr' e _ = error ("Unknown expression '" ++ show e ++ "'")
+evalExpr' (SizeOf (Var name)) vars = vars ! ("#" ++ name)
+evalExpr' (ArrayElem a index) vars = do
+  index <- evalExpr index vars
+  array <- evalExpr a vars
+  mkSelect array index
+evalExpr' (RepBy arrayInEnv index newValue) vars = do
+  value <- evalExpr newValue vars
+  index <- evalExpr index vars
+  array <- evalExpr arrayInEnv vars
+  mkStore array index value
+evalExpr' (Forall locvarName expr) vars = do
+  iSort <- mkIntSort
+  sym <- mkStringSymbol ("!" ++ locvarName)
+  let quantifier = mkIntVar sym
+  q <- quantifier
+  quantifier' <- toApp q
+  let boundedVars = insert locvarName quantifier vars
+  mkForallConst [] [quantifier'] =<< evalExpr' expr boundedVars
+evalExpr' (Exists locvarName expr) vars = do
+  iSort <- mkIntSort
+  sym <- mkStringSymbol ("!" ++ locvarName)
+  let quantifier = mkIntVar sym
+  q <- quantifier
+  quantifier' <- toApp q
+  let boundedVars = insert locvarName quantifier vars
+  mkExistsConst [] [quantifier'] =<< evalExpr' expr boundedVars
+evalExpr' e _ = error ("Unknown z3 expression '" ++ show e ++ "'")
 
 -- Calculates how many atoms the given expression has
 numExprAtoms :: Expr -> Int

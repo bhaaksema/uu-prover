@@ -1,12 +1,14 @@
 module ProgramPath where
 
-import Data.Map (Map, empty, insert, toList, partition, intersection)
+import Data.Map (Map, empty, insert, toList, partition, intersection, keys, filter)
 import qualified Data.Map (map)
 import Data.Maybe (catMaybes, fromMaybe)
 import GCLParser.GCLDatatype
 import GCLParser.Parser (ParseResult, parseGCLfile)
-import WLP (considerExpr, convertVarMap, evalExpr, evalVarDecl, simplifyExpr, wlp, numExprAtoms)
+import WLP (considerExpr, convertVarMap, evalExpr, simplifyExpr, wlp, numExprAtoms, findLocvars)
 import Z3.Monad
+import System.Environment
+import Control.Monad (when)
 
 data ProgramPath a
   = TreePath
@@ -35,13 +37,21 @@ constructPath program = _constructPath (stmt program)
 
 --Function that will transform a statement into a Programpath
 _constructPath :: Stmt -> ProgramPath Expr
-_constructPath (IfThenElse expr ifStmt elseStmt) = TreePath (LitB True) Nothing (injectExpression expr (_constructPath ifStmt)) (injectExpression (OpNeg expr) (_constructPath elseStmt))
+_constructPath (IfThenElse expr ifStmt elseStmt) = TreePath (LitB True) Nothing (injectExpression expr ifPath) (injectExpression (OpNeg expr) elsePath)
+  where
+    ifPath = _constructPath ifStmt
+    elsePath = _constructPath elseStmt
 _constructPath (While expr stmt) = TreePath (LitB True) Nothing (EmptyPath (OpNeg expr)) runs
   where
-    runs = TreePath expr (Just stmt) runOnce runMore --Construct paths for when the while runs
+    stmtTree = _constructPath stmt --Construct a path of the inner statement. This is required because there may be nested special environments.
+    runs = combinePaths stmtTree (TreePath expr Nothing runOnce runMore) --Construct paths for when the while runs
     runOnce = EmptyPath (OpNeg expr)
     runMore = _constructPath (While expr stmt)
-_constructPath (Seq stmt nextStmt) = combinePaths (_constructPath stmt) (_constructPath nextStmt)
+_constructPath (Seq stmt nextStmt) = combinePaths s1 s2
+  where
+    s1 = _constructPath stmt
+    s2 = _constructPath nextStmt
+_constructPath (Block vars stmt) = _constructPath stmt --TODO This may miss out on some variables! Needs checking
 _constructPath stmt = LinearPath (LitB True) stmt
 
 --Injects the given expression into the condition for the given path
@@ -263,8 +273,9 @@ evaluateFullTree (TreePath cond stmts option1 option2) vars = do
 
   (simplifyExpr (BinopExpr Implication condExpr bothPaths), newVars)
 evaluateFullTree (LinearPath cond stmts) vars = do
-  let condExpr = considerExpr cond vars
-  let (z3Stmts, newVars) = wlp stmts (LitB True) vars
+  let (_, newVars) = wlp stmts (LitB True) vars
+  let (z3Stmts, _) = wlp stmts (LitB True) newVars
+  let condExpr = considerExpr cond newVars
   (simplifyExpr (BinopExpr Implication condExpr z3Stmts), newVars)
 evaluateFullTree (EmptyPath cond) v = (cond, v)
 evaluateFullTree InvalidPath v = (LitB False, v)
@@ -281,32 +292,42 @@ verifyExpr :: Expr -> (Map String Expr, Map String Type) -> IO ()
 verifyExpr expr (vars, types) =
   evalZ3 script >>= \(result, sol) ->
     case result of
-      Sat -> putStrLn "Found a counter example: " >> putStrLn (show (map fst (toList intNames)) ++ show (map fst (toList boolNames))) >> putStrLn sol
-      _ -> putStrLn "No counter examples for this program could be found ."
+      Sat -> putStrLn "Found a counter example: "
+        >> putStrLn "Integers, Bools, Arrays"
+        >> putStrLn (show (map fst (toList intNames)) ++ show (map fst (toList boolNames))  ++ show (map fst (toList arrayNames)))
+        >> putStrLn sol
+      _ -> putStrLn "No counter examples for this program could be found."
   where
     z3vars = convertVarMap (vars, types)
-    (intNames, notInts) = partition onlyInts types
-    (boolNames, others) = partition onlyBools types
+    intNames = Data.Map.filter onlyInts types
+    boolNames = Data.Map.filter onlyBools types
+    arrayNames = Data.Map.filter onlyArrays types
     script = do
       reset
       push
       assert =<< evalExpr expr z3vars
       newVars <- mapM snd (toList z3Ints)
-      (_, intMaybe) <- withModel $ \m -> 
+      (_, intMaybe) <- withModel $ \m ->
          catMaybes <$> mapM (evalInt m) newVars
 
+      newVars <- mapM snd (toList z3Arrays)
+      (_, arrayMaybe) <- withModel $ \m ->
+        map interpMap <$> (catMaybes <$> mapM (evalArray m) newVars)
       newVars <- mapM snd (toList z3Bools)
-      (result, boolMaybe) <- withModel $ \m -> 
+      (result, boolMaybe) <- withModel $ \m ->
          catMaybes <$> mapM (evalBool m) newVars
-      let display = show (unMaybe intMaybe) ++ show (unMaybe boolMaybe)
+      let display = unMaybe intMaybe ++ unMaybe boolMaybe ++ unMaybe arrayMaybe
       return (result, display)
-         
+
     z3Ints = intersection z3vars intNames
     z3Bools = intersection z3vars boolNames
+    z3Arrays = intersection z3vars arrayNames
     onlyInts (PType PTInt) = True
     onlyInts _ = False
     onlyBools (PType PTBool) = True
     onlyBools _ = False
+    onlyArrays (AType _) = True
+    onlyArrays _ = False
     unMaybe m = maybe "" show m
 
 -- Turns a given expression into an AST
@@ -323,7 +344,12 @@ mutatedVariables vars = z3Environment
       | key == name = [name]
       | otherwise = []
     convert (key, expr) = []
-    z3Environment = concat (map convert (toList vars))
+    z3Environment = concatMap convert (toList vars)
+
+addExprVariable :: (Map String Expr, Map String Type) -> VarDeclaration -> (Map String Expr, Map String Type)
+addExprVariable (map, ts) (VarDeclaration name t@(PType _)) = (insert name (Var name) map, insert name t ts)
+addExprVariable (map, ts) (VarDeclaration name t@(AType _)) = (insert name (Var name) (insert ("#" ++ name) (Var ("#" ++ name)) map), insert name t (insert ("#" ++ name) (PType PTInt) ts))
+addExprVariable _ (VarDeclaration _ t) = error $ "This program does not support variables of type " ++ show t
 
 --
 -- SECTION 6
@@ -332,48 +358,75 @@ mutatedVariables vars = z3Environment
 --
 
 -- main loads the file and puts the ParseResult Program through the following functions
-run = do
-  program <- parseGCLfile "test/input/min.gcl"
-  let k = 10
-  evaluateProgram program k
+arguments :: [[Char]] -> (Int, [Char], Bool, Bool)
+arguments [] = (10, "test/input/reverse.gcl", False, False)
+arguments ("-K":arg:xs) = (read arg, a2, a3, a4)
+  where (_, a2, a3, a4) = arguments xs
+arguments ("-file":arg:xs) = (a1, arg, a3, a4)
+  where (a1, _, a3, a4) = arguments xs
+arguments ("-wlp":xs) = (a1, a2, True, a4)
+  where (a1, a2, _, a4) = arguments xs
+arguments ("-path":xs) = (a1, a2, a3, True)
+  where (a1, a2, a3, _) = arguments xs
+arguments (x:xs) = arguments xs
 
-evaluateProgram (Left _) k = putStrLn "Unable to parse program"
-evaluateProgram (Right program) k = do
+run = do
+  args <- getArgs
+  let parsedArgs@(_, file, _, _) = arguments args
+  program <- parseGCLfile file
+  evaluateProgram program parsedArgs
+
+evaluateProgram (Left _) _ = putStrLn "Unable to parse program"
+evaluateProgram (Right program) (k, file, printWlp, printPath) = do
   let path = constructPath program
+  let locVars = findLocvars (stmt program)
   let flaggedPath = flagInvalid path k
 
   let pathsTooLong = numInvalid flaggedPath
-  putStrLn ("Results when using k=" ++ show k ++ " on the specified program:")
+  putStrLn ("Results when using k=" ++ show k ++ " on "++ file ++":")
   putStrLn []
+  putStrLn ("Found " ++ show (countBranches flaggedPath) ++ " paths.")
   putStrLn ("Of these paths, at least " ++ show pathsTooLong ++ " are infeasible as they are too long.")
   putStrLn []
   let clearedPath = removePaths path k
   let cantBranch = numConditionFalse clearedPath
   putStrLn ("Reduced structure to " ++ show (countBranches clearedPath) ++ " paths.")
   putStrLn ("Of these paths, " ++ show cantBranch ++ " can be pruned as their branch condition is the literal False. (TODO)")
+
+  -- Print path if the argument -path was specified
+  putStrLn []
+  when printPath $ putStrLn "The path is:"
+  when printPath $
+    putStrLn (printTree clearedPath k)
   putStrLn "Evaluating the reduced structure gives:"
   putStrLn []
-  --putStrLn (printTree clearedPath k)
+
   -- Create a map with all the variables and an initial value of (Var name)
-  let vars = foldl (\map (VarDeclaration name _) -> insert name (Var name) map) empty (input program ++ output program)
-  let varTypes = foldl (\map (VarDeclaration name typ) -> insert name typ map) empty (input program ++ output program)
+  let (vars, varTypes) = foldl addExprVariable (empty, empty) (input program ++ output program ++ locVars)
 
   -- Calculate the wlp and initial variable values over the tree
   let (wlp, vars') = calcWLP clearedPath vars
+  putStrLn "All defined variables are are:"
+  print (keys vars)
   putStrLn "Initial variable values are:"
   print (toList vars')
   putStrLn "Z3 variables that will be created created to solve:"
   print $
     mutatedVariables vars'
   putStrLn []
+
   putStrLn $
-    "Found WLP consisting of " ++ show (numExprAtoms wlp) ++ " atoms:"
-  print wlp
-  putStrLn "The corresponding z3 scripts is:"
+    "Found WLP consisting of " ++ show (numExprAtoms wlp) ++ " atoms."
+
+  -- Print wlp and z3 script if -wlp was specified
+  when printWlp $ putStrLn "The WLP is:"
+  when printWlp $ print wlp
+  when printWlp $ putStrLn "The corresponding z3 scripts is:"
   script <- evalZ3 $ astToString =<< z3Script (OpNeg wlp) (vars', varTypes)
-  putStrLn script
+  when printWlp $ putStrLn script
   putStrLn []
-  result <- verifyExpr (OpNeg wlp) (vars', varTypes)
-  print result
+
+  -- Print the result of the verification
+  verifyExpr (OpNeg wlp) (vars', varTypes)
 
 --print path
