@@ -6,6 +6,7 @@ dependencies:
 - base >= 4.7 && < 5
 - z3 >= 408.2
 - GCLparser
+- containers
 
 library:
   source-dirs: src

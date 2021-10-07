@@ -16,6 +16,7 @@ source-repository head
 
 library
   exposed-modules:
+      POC
       ProgramPath
       WLP
   other-modules:
@@ -25,6 +26,7 @@ library
   build-depends:
       GCLparser
     , base >=4.7 && <5
+    , containers
     , z3 >=408.2
   default-language: Haskell2010
 
@@ -38,6 +40,7 @@ executable uu-program-verification-exe
   build-depends:
       GCLparser
     , base >=4.7 && <5
+    , containers
     , uu-program-verification
     , z3 >=408.2
   default-language: Haskell2010
@@ -53,6 +56,7 @@ test-suite uu-program-verification-test
   build-depends:
       GCLparser
     , base >=4.7 && <5
+    , containers
     , uu-program-verification
     , z3 >=408.2
   default-language: Haskell2010
