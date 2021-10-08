@@ -1,20 +1,8 @@
 module WLP where
 
 import GCLParser.GCLDatatype
-import GCLParser.Parser (ParseResult)
-import GHC.ResponseFile (expandResponse)
 import Z3.Monad
 
-verifyProgram :: ParseResult Program -> IO Result
-verifyProgram program = evalZ3 $ do
-  assert =<< evalProgram program
-  check
-
-evalProgram :: MonadZ3 z3 => ParseResult Program -> z3 AST
-evalProgram (Right prog) = evalStmt (stmt prog)
-evalProgram (Left err) = mkFalse
-
--- TODO: assign array-assign
 evalStmt :: MonadZ3 z3 => Stmt -> z3 AST
 evalStmt (Seq Skip stmt) = evalStmt stmt
 evalStmt (Seq (Assume expr) stmt) = do
@@ -28,7 +16,6 @@ evalStmt (Seq stmt1 stmt2) = do
 evalStmt (Assert expr) = evalExpr expr
 evalStmt _ = mkTrue
 
--- TODO: size forall exists var
 evalExpr :: MonadZ3 z3 => Expr -> z3 AST
 evalExpr (LitI i) = do
   sort <- mkIntSort

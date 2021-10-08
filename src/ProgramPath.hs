@@ -2,7 +2,7 @@ module ProgramPath where
 
 import Data.Maybe (fromMaybe)
 import GCLParser.GCLDatatype
-import GCLParser.Parser (ParseResult, parseGCLfile)
+import GCLParser.Parser (parseGCLfile)
 import WLP (evalExpr, evalStmt)
 import Z3.Monad
 
