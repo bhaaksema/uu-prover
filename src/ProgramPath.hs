@@ -381,19 +381,19 @@ run = do
   evaluateProgram program parsedArgs
 
 --Will return if all of the statements were correctly verified
-mapUntilSat :: ((Expr, ProgramPath Expr) -> (IO Result, ProgramPath Expr)) -> [(Expr, ProgramPath Expr)] -> IO (Result, ProgramPath Expr)
-mapUntilSat f [] = return (Unsat, EmptyPath (LitB True))
+mapUntilSat :: ((Expr, ProgramPath Expr) -> (IO Result, ProgramPath Expr, Expr)) -> [(Expr, ProgramPath Expr)] -> IO (Result, ProgramPath Expr, Expr)
+mapUntilSat f [] = return (Unsat, EmptyPath (LitB True), LitB True)
 mapUntilSat f (x : xs) = do
-  let (r, path) = f x
+  let (r, path, wlp) = f x
   result <- r
   case result of
-    Sat -> return (Sat, path)
+    Sat -> return (Sat, path, wlp)
     Unsat -> mapUntilSat f xs
     Undef -> do
-      (others, otherPath) <- mapUntilSat f xs
+      (others, otherPath, otherWlp) <- mapUntilSat f xs
       case others of
-        Sat -> return (Sat, otherPath)
-        _ -> return (Undef, path)
+        Sat -> return (Sat, otherPath, otherWlp)
+        _ -> return (Undef, path, wlp)
 
 evaluateProgram (Left _) _ = putStrLn "Unable to parse program"
 evaluateProgram (Right program) (k, file, printWlp, printPath) = do
@@ -447,10 +447,14 @@ evaluateProgram (Right program) (k, file, printWlp, printPath) = do
   putStrLn []
 
   -- Print the result of the verification
-  (final, finalPath) <- mapUntilSat (\(wlp, path) -> (verifyExpr (OpNeg wlp) (vars, varTypes), path)) wlpsInfo
+  (final, finalPath, finalWlp) <- mapUntilSat (\(wlp, path) -> (verifyExpr (OpNeg wlp) (vars, varTypes), path, wlp)) wlpsInfo
   case final of
     Unsat -> putStrLn "No counter examples for this program could be found."
     Undef -> putStrLn "At least one of the paths returned Undef, but no counter examples for this program could be found."
-    Sat -> putStrLn ("Found this counterexample in the path: " ++ show finalPath)
+    Sat -> do
+      putStrLn ("Found this counterexample in the path: " ++ show finalPath)
+      putStrLn "The corresponding z3 scripts is:"
+      script <- evalZ3 $ astToString =<< z3Script (OpNeg finalWlp) (vars, varTypes)
+      putStrLn script
 
 --print path
