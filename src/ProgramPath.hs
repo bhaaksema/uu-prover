@@ -436,7 +436,7 @@ evaluateProgram (Right program) (k, file, printWlp, printPath) = do
   putStrLn []
 
   putStrLn $
-    "Found WLP consisting of " ++ show (sum (map numExprAtoms wlps)) ++ " atoms."
+    "Found " ++ show (length wlps) ++ " WLPs consisting of " ++ show (sum (map numExprAtoms wlps)) ++ " atoms."
 
   -- Print wlp and z3 script if -wlp was specified
   when printWlp $ putStrLn "The WLPs are:"
