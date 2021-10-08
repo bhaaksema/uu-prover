@@ -63,13 +63,16 @@ injectExpression _ InvalidPath = InvalidPath
 
 --Utility function that can combine two ProgramPaths into a single ProgramPath
 combinePaths :: ProgramPath Expr -> ProgramPath Expr -> ProgramPath Expr
-combinePaths (LinearPath condA stmtA) (LinearPath condB stmtB) = LinearPath (simplifyExpr (BinopExpr And condA condB)) (Seq stmtA stmtB)
-combinePaths (LinearPath condA lin) (TreePath condB tStmts option1 option2) = TreePath (simplifyExpr (BinopExpr And condA condB)) newStmts option1 option2 where newStmts = maybe (Just lin) (Just . Seq lin) tStmts
+combinePaths (LinearPath condA stmtA) (LinearPath condB stmtB) = LinearPath (simplifyExpr (BinopExpr And condA condB)) (combineStatements stmtA stmtB)
+combinePaths (LinearPath condA lin) (TreePath condB tStmts option1 option2) = TreePath (simplifyExpr (BinopExpr And condA condB)) newStmts option1 option2 where newStmts = maybe (Just lin) (Just . combineStatements lin) tStmts
 combinePaths (TreePath cond tStmts option1 option2) linpath@LinearPath {} = TreePath cond tStmts (combinePaths option1 linpath) (combinePaths option2 linpath)
 combinePaths (TreePath cond tStmts option1 option2) treepath@TreePath {} = TreePath cond tStmts (combinePaths option1 treepath) (combinePaths option2 treepath)
 combinePaths (EmptyPath cond) otherPath = injectExpression cond otherPath
 combinePaths otherPath empty@(EmptyPath cond) = combinePaths empty otherPath
 combinePaths _ _ = InvalidPath
+
+combineStatements (Seq a b) c = Seq a (combineStatements b c)
+combineStatements s1 s2 = Seq s1 s2
 
 --
 -- SECTION 2
@@ -456,5 +459,3 @@ evaluateProgram (Right program) (k, file, printWlp, printPath) = do
       putStrLn "The corresponding z3 scripts is:"
       script <- evalZ3 $ astToString =<< z3Script (OpNeg finalWlp) (vars, varTypes)
       putStrLn script
-
---print path

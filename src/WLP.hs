@@ -42,13 +42,15 @@ considerExpr' b@(LitB _) _ = b
 considerExpr' (BinopExpr binop expr1 expr2) vars = BinopExpr binop (considerExpr expr1 vars) (considerExpr expr2 vars)
 considerExpr' (OpNeg expr) vars = OpNeg (considerExpr expr vars)
 considerExpr' (Var name) vars = vars ! name
-considerExpr' (ArrayElem (Var name) index) vars = ArrayElem (vars ! name) index
+considerExpr' (ArrayElem (Var name) index) vars = ArrayElem (vars ! name) (considerExpr index vars)
 considerExpr' (Parens e) vars = considerExpr e vars
 considerExpr' (SizeOf (Var name)) vars = vars ! ("#" ++ name)
 considerExpr' (Forall locvarName expr) vars = Forall locvarName (considerExpr expr boundedVars)
-  where boundedVars = insert locvarName (Var locvarName) vars
+  where
+    boundedVars = insert locvarName (Var locvarName) vars
 considerExpr' (Exists locvarName expr) vars = Exists locvarName (considerExpr expr boundedVars)
-  where boundedVars = insert locvarName (Var locvarName) vars
+  where
+    boundedVars = insert locvarName (Var locvarName) vars
 considerExpr' e _ = error ("Unknown expression '" ++ show e ++ "'")
 
 -- Runs the given expression and environment map through Z3
