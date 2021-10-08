@@ -261,7 +261,7 @@ verifyTree tree = evalZ3 $ do
 
 -- main loads the file and puts the ParseResult Program through the following functions
 run = do
-  program <- parseGCLfile "test/input/min.gcl"
+  program <- parseGCLfile "input/test/min.gcl"
   let k = 10
   evaluateProgram program k
 
