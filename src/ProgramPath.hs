@@ -31,7 +31,7 @@ data ProgramPath a
 constructPath :: Program -> ProgramPath Expr
 constructPath program = _constructPath (stmt program)
 
---Function that will transform a statement into a Programpath
+--Function that will transform a statement into a ProgramPath
 _constructPath :: Stmt -> ProgramPath Expr
 _constructPath (IfThenElse expr ifStmt elseStmt) = TreePath (LitB True) Nothing (injectExpression expr (_constructPath ifStmt)) (injectExpression (OpNeg expr) (_constructPath elseStmt))
 _constructPath (While expr stmt) = TreePath (LitB True) Nothing (EmptyPath expr) runs
@@ -76,7 +76,7 @@ _removePaths :: ProgramPath Expr -> Int -> ProgramPath Expr
 _removePaths (TreePath _ _ InvalidPath InvalidPath) depth = InvalidPath --Prune a branch if both branches are invalid
 _removePaths (TreePath cond tStmts pathA pathB) depth
   | remDepth < 0 = InvalidPath --In this case all preceding statements are longer than what happens after branching, so K is exceeded anyway
-  | otherwise = pruneInvalidBranch (TreePath cond tStmts newA newB) --Evaluate boths paths. If both turn out to be unfeasable this node is pruned as well
+  | otherwise = pruneInvalidBranch (TreePath cond tStmts newA newB) --Evaluate both paths. If both turn out to be unfeasible this node is pruned as well
   where
     baseDepth = splitDepth tStmts depth --How many statements happen before the branch
     remDepth = depth - baseDepth --The depth remaining after the preceding statements
@@ -206,7 +206,7 @@ __printTree (TreePath cond tStmts option1 option2) depth k = tabs ++ show tStmts
 --Note that linear paths should be allowed to be evaluated further than depth, as otherwise we won't know if they are too long. If they are too long however the returned value will be > the given depth, so it can be derived that this path is too long
 totalDepth :: ProgramPath a -> Int -> Int
 totalDepth (LinearPath _ stmts) depth = countStatements stmts --Depth of a linear path is just counting the statements statement
-totalDepth path depth --Wrapper for handeling of non-linear ProgramPath structure
+totalDepth path depth --Wrapper for handling of non-linear ProgramPath structure
   | depth <= 0 = depth --Cut off when max depth was reached
   | otherwise = _totalDepth path depth
 
@@ -256,12 +256,12 @@ verifyTree tree = evalZ3 $ do
 --
 -- SECTION 6
 --
--- The following functions will run the 'main' program and output the required informations
+-- The following functions will run the 'main' program and output the required information
 --
 
 -- main loads the file and puts the ParseResult Program through the following functions
-run = do
-  program <- parseGCLfile "input/test/min.gcl"
+run file = do
+  program <- parseGCLfile file
   let k = 10
   evaluateProgram program k
 
