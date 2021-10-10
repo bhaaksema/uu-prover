@@ -290,10 +290,11 @@ verifyExpr expr (vars, types) =
   evalZ3 script >>= \(result, sol) ->
     case result of
       Sat -> do
-        putStrLn "Found a counter example: "
-          >> putStrLn "Integers, Bools, Arrays"
+        putStrLn "counterexample found: "
+          >> putStrLn "ints, bools, arrays"
           >> putStrLn (show (map fst (toList intNames)) ++ show (map fst (toList boolNames)) ++ show (map fst (toList arrayNames)))
           >> putStrLn sol
+          >> putStrLn []
         return result
       _ -> return result
   where
