@@ -284,23 +284,23 @@ evaluateFullTree linpath@(LinearPath cond stmts)
 evaluateFullTree (EmptyPath cond) = [(const cond, EmptyPath cond)]
 evaluateFullTree InvalidPath = [(const (LitB False), InvalidPath)]
 
-evaluateTreeConds :: ProgramPath Expr -> (Map String Expr, Map String Type) -> IO (ProgramPath Expr)
-evaluateTreeConds (TreePath cond stmts option1 option2) (vars, types) = do
+evaluateTreeConds :: ProgramPath Expr -> Map String (Expr) -> Map String (Z3 AST) -> IO (ProgramPath Expr)
+evaluateTreeConds (TreePath cond stmts option1 option2) vars varmap = do
   let evaluatedCond = considerExpr cond vars
-  condExpr <- z3Satisfiable evaluatedCond (vars, types)
+  condExpr <- z3Satisfiable evaluatedCond varmap
   let newVars = maybe vars (`traceVarExpr` vars) stmts
-  newTree1 <- evaluateTreeConds option1 (newVars, types)
-  newTree2 <- evaluateTreeConds option2 (newVars, types)
+  newTree1 <- evaluateTreeConds option1 newVars varmap
+  newTree2 <- evaluateTreeConds option2 newVars varmap
   return (TreePath condExpr stmts newTree1 newTree2)
-evaluateTreeConds linpath@(LinearPath cond stmts) (vars, types) = do
+evaluateTreeConds linpath@(LinearPath cond stmts) vars varmap = do
   let evaluatedCond = considerExpr cond vars
-  condExpr <- z3Satisfiable evaluatedCond (vars, types)
+  condExpr <- z3Satisfiable evaluatedCond varmap
   return $ LinearPath condExpr stmts
-evaluateTreeConds (EmptyPath cond) (vars, types) = do
+evaluateTreeConds (EmptyPath cond) vars varmap = do
   let evaluatedCond = considerExpr cond vars
-  condExpr <- z3Satisfiable evaluatedCond (vars, types)
+  condExpr <- z3Satisfiable evaluatedCond varmap
   return $ EmptyPath condExpr
-evaluateTreeConds InvalidPath _ = return InvalidPath
+evaluateTreeConds InvalidPath _ _ = return InvalidPath
 
 -- Calculates the WLP over a program path
 calcWLP :: ProgramPath Expr -> Map String Expr -> [(Expr, ProgramPath Expr)]
@@ -360,18 +360,17 @@ z3Script expr (vars, types) = evalExpr expr z3vars
   where
     z3vars = convertVarMap (vars, types)
 
-z3Satisfiable :: Expr -> (Map String Expr, Map String Type) -> IO Expr
-z3Satisfiable expr (vars, types) =
+z3Satisfiable :: Expr -> Map String (Z3 AST) -> IO Expr
+z3Satisfiable expr varmap = do
   evalZ3 script >>= \result ->
     case result of
       Sat -> return expr
       _ -> return (LitB False)
   where
-    z3vars = convertVarMap (vars, types)
     script = do
       reset
       push
-      assert =<< evalExpr expr z3vars
+      assert =<< evalExpr expr varmap
       check
 
 -- Returns the names of variables that are not set to a primitive value

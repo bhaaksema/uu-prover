@@ -67,7 +67,8 @@ evaluateProgram (Right program) (k, file, printWlp, printPath) = do
   putStrLn []
   let clearedPath = removePaths path k
   putStrLn ("Reduced structure to " ++ show (countBranches clearedPath) ++ " paths.")
-  condPath <- evaluateTreeConds clearedPath (vars, varTypes)
+  let varmap = convertVarMap (vars, varTypes)
+  condPath <- evaluateTreeConds clearedPath vars varmap
   let cantBranch = numConditionFalse condPath
   putStrLn ("Of these paths, at least " ++ show cantBranch ++ " won't be evaluated as their branch condition evaluates to False. (possibly more because of subpaths)")
 
