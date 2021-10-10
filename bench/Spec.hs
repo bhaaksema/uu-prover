@@ -6,5 +6,5 @@ import System.Directory (listDirectory)
 
 main :: IO ()
 main = do
-  files <- listDirectory "input/test/"
-  defaultMain [bench file $ nfIO (run ("input/test/" ++ file)) | file <- files]
+  files <- listDirectory "input/bench/"
+  defaultMain [bench file $ nfIO (run ("input/bench/" ++ file)) | file <- files]
