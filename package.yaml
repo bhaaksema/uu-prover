@@ -5,6 +5,7 @@ github: "bhaaksema/uu-program-verification"
 dependencies:
 - base >= 4.7 && < 5
 - GCLparser
+- containers
 - z3 >= 408.2
 
 library:

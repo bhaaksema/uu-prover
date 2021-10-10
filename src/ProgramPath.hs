@@ -1,9 +1,13 @@
 module ProgramPath where
 
-import Data.Maybe (fromMaybe)
+import Control.Monad (when)
+import Data.Map (Map, empty, filter, insert, intersection, keys, partition, toList)
+import qualified Data.Map (map)
+import Data.Maybe (catMaybes, fromMaybe)
 import GCLParser.GCLDatatype
 import GCLParser.Parser (parseGCLfile)
-import WLP (evalExpr, evalStmt)
+import System.Environment
+import WLP (considerExpr, convertVarMap, evalExpr, findLocvars, numExprAtoms, simplifyExpr, wlp)
 import Z3.Monad
 
 data ProgramPath a
@@ -33,13 +37,21 @@ constructPath program = _constructPath (stmt program)
 
 --Function that will transform a statement into a ProgramPath
 _constructPath :: Stmt -> ProgramPath Expr
-_constructPath (IfThenElse expr ifStmt elseStmt) = TreePath (LitB True) Nothing (injectExpression expr (_constructPath ifStmt)) (injectExpression (OpNeg expr) (_constructPath elseStmt))
-_constructPath (While expr stmt) = TreePath (LitB True) Nothing (EmptyPath expr) runs
+_constructPath (IfThenElse expr ifStmt elseStmt) = TreePath (LitB True) Nothing (injectExpression expr ifPath) (injectExpression (OpNeg expr) elsePath)
   where
-    runs = TreePath (LitB True) Nothing runOnce runMore --Construct paths for when the while runs
-    runOnce = injectExpression expr (_constructPath stmt)
-    runMore = combinePaths runOnce (_constructPath (Seq stmt (While expr stmt)))
-_constructPath (Seq stmt nextStmt) = combinePaths (_constructPath stmt) (_constructPath nextStmt)
+    ifPath = _constructPath ifStmt
+    elsePath = _constructPath elseStmt
+_constructPath (While expr stmt) = TreePath (LitB True) Nothing (EmptyPath (OpNeg expr)) runs
+  where
+    stmtTree = _constructPath stmt --Construct a path of the inner statement. This is required because there may be nested special environments.
+    runs = combinePaths stmtTree (TreePath expr Nothing runOnce runMore) --Construct paths for when the while runs
+    runOnce = EmptyPath (OpNeg expr)
+    runMore = _constructPath (While expr stmt)
+_constructPath (Seq stmt nextStmt) = combinePaths s1 s2
+  where
+    s1 = _constructPath stmt
+    s2 = _constructPath nextStmt
+_constructPath (Block vars stmt) = _constructPath stmt --TODO This may miss out on some variables! Needs checking
 _constructPath stmt = LinearPath (LitB True) stmt
 
 --Injects the given expression into the condition for the given path
@@ -51,13 +63,16 @@ injectExpression _ InvalidPath = InvalidPath
 
 --Utility function that can combine two ProgramPaths into a single ProgramPath
 combinePaths :: ProgramPath Expr -> ProgramPath Expr -> ProgramPath Expr
-combinePaths (LinearPath condA stmtA) (LinearPath condB stmtB) = LinearPath (BinopExpr And condA condB) (Seq stmtA stmtB)
-combinePaths (LinearPath condA lin) (TreePath condB tStmts option1 option2) = TreePath (BinopExpr And condA condB) newStmts option1 option2 where newStmts = maybe (Just lin) (Just . Seq lin) tStmts
+combinePaths (LinearPath condA stmtA) (LinearPath condB stmtB) = LinearPath (simplifyExpr (BinopExpr And condA condB)) (combineStatements stmtA stmtB)
+combinePaths (LinearPath condA lin) (TreePath condB tStmts option1 option2) = TreePath (simplifyExpr (BinopExpr And condA condB)) newStmts option1 option2 where newStmts = maybe (Just lin) (Just . combineStatements lin) tStmts
 combinePaths (TreePath cond tStmts option1 option2) linpath@LinearPath {} = TreePath cond tStmts (combinePaths option1 linpath) (combinePaths option2 linpath)
 combinePaths (TreePath cond tStmts option1 option2) treepath@TreePath {} = TreePath cond tStmts (combinePaths option1 treepath) (combinePaths option2 treepath)
 combinePaths (EmptyPath cond) otherPath = injectExpression cond otherPath
 combinePaths otherPath empty@(EmptyPath cond) = combinePaths empty otherPath
 combinePaths _ _ = InvalidPath
+
+combineStatements (Seq a b) c = Seq a (combineStatements b c)
+combineStatements s1 s2 = Seq s1 s2
 
 --
 -- SECTION 2
@@ -171,6 +186,13 @@ countBranches _ = 0
 numInvalid :: Num p => ProgramPath a -> p
 numInvalid = foldTreeStmt (\_ prev -> prev) 0 (+ 1)
 
+--Returns the number of nodes with a condition of false for a path of FIXED LENGTH
+numConditionFalse :: Num p => ProgramPath Expr -> p
+numConditionFalse = foldTreeCond conditionCheck 0 id
+  where
+    conditionCheck (LitB False) prev = 1 + prev
+    conditionCheck _ prev = prev
+
 -- Note that this function assumes that all ifs and whiles have been removed from the path
 countStatements :: Num p => Stmt -> p
 countStatements (Seq a b) = countStatements a + countStatements b
@@ -190,16 +212,26 @@ _printTree tree depth k
 __printTree :: Show a => ProgramPath a -> Int -> Int -> String
 __printTree InvalidPath _ _ = "INVALID PATH FOUND"
 __printTree (EmptyPath _) _ _ = "LOOSE EMPTY PATH FOUND"
-__printTree (LinearPath cond (Seq a b)) depth k = _printTree (LinearPath cond a) depth k ++ _printTree (LinearPath cond b) remDepth k
+__printTree (LinearPath cond a) depth k = "[" ++ show cond ++ "]" ++ show a
   where
     aDepth = totalDepth (LinearPath cond a) depth
     remDepth = depth - aDepth
-__printTree (LinearPath cond stmt) _ _ = show stmt
-__printTree (TreePath cond tStmts option1 option2) depth k = tabs ++ show tStmts ++ "\n" ++ tabs ++ "Branch1:\n" ++ tabs ++ _printTree option1 remDepth (k + 1) ++ "\n" ++ tabs ++ "Branch2:\n" ++ _printTree option2 remDepth (k + 1) --Add k+1, because Nothing as tStmts may lead to it thinking it is on the same level
+__printTree (TreePath cond tStmts option1 option2) depth k =
+  tabs
+    ++ show tStmts
+    ++ "\n"
+    ++ tabs
+    ++ "Branch1:\n"
+    ++ tabs
+    ++ _printTree option1 remDepth (k + 1)
+    ++ "\n"
+    ++ tabs
+    ++ "Branch2:\n"
+    ++ _printTree option2 remDepth (k + 1) --Add k+1, because Nothing as tStmts may lead to it thinking it is on the same level
   where
     baseDepth = splitDepth tStmts depth
     remDepth = depth - baseDepth
-    tabs = replicate (k - depth) '\t' --Tabs for same level
+    tabs = replicate (2 * (k - depth)) ' ' --Tabs for same level
 
 --Get the length of the longest branched path
 --Wrapper for actual function, so it wont keep evaluating the infinite structure
@@ -229,29 +261,98 @@ splitDepth tStmts depth = maybe 0 countStatements tStmts
 -- The following functions are to transform the tree into a Z3 structure and to evaluate that structure
 --
 
---Transform conditions from Expr to Z3 AST
-treeExprToZ3 :: ProgramPath Expr -> ProgramPath (Z3 AST)
-treeExprToZ3 = mapTree evalExpr id
-
-evaluateFullTree :: MonadZ3 z3 => ProgramPath (z3 AST) -> z3 AST
+evaluateFullTree :: ProgramPath Expr -> [(Map String Expr -> Expr, ProgramPath Expr)]
 evaluateFullTree (TreePath cond stmts option1 option2) = do
-  z3Stmts <- maybe mkTrue evalStmt stmts
-  z31 <- evaluateFullTree option1
-  z32 <- evaluateFullTree option2
-  z3cond <- cond
-  and <- mkAnd [z3Stmts, z31, z32]
-  mkImplies z3cond and
-evaluateFullTree (LinearPath cond stmts) = do
-  z3cond <- cond
-  z3Stmts <- evalStmt stmts
-  mkImplies z3cond z3Stmts
-evaluateFullTree (EmptyPath cond) = cond
-evaluateFullTree InvalidPath = mkFalse
+  let expr1 = evaluateFullTree option1
+  let expr2 = evaluateFullTree option2
+  -- Calculates the wlp over branch node statements
+  -- If it has statements, runs wlp using the precondition of expr1, else just returns that precondition
+  let wlps1 = map concatPaths expr1
+  let wlps2 = map concatPaths expr2
+  wlps1 ++ wlps2
+  where
+    myPath = maybe (EmptyPath cond) (LinearPath cond) stmts
+    addCond wlp = \v -> simplifyExpr (BinopExpr Implication (considerExpr cond v) (wlp v))
+    concatPaths (expr, path) = (addCond (maybe expr (`wlp` expr) stmts), combinePaths myPath path)
+evaluateFullTree linpath@(LinearPath cond stmts) = do
+  let path = wlp stmts (\v -> LitB True)
+  let condExpr = considerExpr cond
+  [(\vars -> simplifyExpr (BinopExpr Implication (condExpr vars) (path vars)), linpath)]
+evaluateFullTree (EmptyPath cond) = [(const cond, EmptyPath cond)]
+evaluateFullTree InvalidPath = [(const (LitB False), InvalidPath)]
 
-verifyTree :: ProgramPath (Z3 AST) -> IO Result
-verifyTree tree = evalZ3 $ do
-  assert =<< evaluateFullTree tree
-  check
+-- Calculates the WLP over a program path
+calcWLP :: ProgramPath Expr -> Map String Expr -> [(Expr, ProgramPath Expr)]
+calcWLP tree vars = do
+  let wlpsAndTrees = evaluateFullTree tree
+  map (\(expr, path) -> (simplifyExpr (expr vars), path)) wlpsAndTrees
+
+-- Outputs if an expression can be contradicted. If so, also outputs how
+verifyExpr :: Expr -> (Map String Expr, Map String Type) -> IO Result
+verifyExpr expr (vars, types) =
+  evalZ3 script >>= \(result, sol) ->
+    case result of
+      Sat -> do
+        putStrLn "Found a counter example: "
+          >> putStrLn "Integers, Bools, Arrays"
+          >> putStrLn (show (map fst (toList intNames)) ++ show (map fst (toList boolNames)) ++ show (map fst (toList arrayNames)))
+          >> putStrLn sol
+        return result
+      _ -> return result
+  where
+    z3vars = convertVarMap (vars, types)
+    intNames = Data.Map.filter onlyInts types
+    boolNames = Data.Map.filter onlyBools types
+    arrayNames = Data.Map.filter onlyArrays types
+    script = do
+      reset
+      push
+      assert =<< evalExpr expr z3vars
+      newVars <- mapM snd (toList z3Ints)
+      (_, intMaybe) <- withModel $ \m ->
+        catMaybes <$> mapM (evalInt m) newVars
+
+      newVars <- mapM snd (toList z3Arrays)
+      (_, arrayMaybe) <- withModel $ \m ->
+        map interpMap <$> (catMaybes <$> mapM (evalArray m) newVars)
+
+      newVars <- mapM snd (toList z3Bools)
+      (result, boolMaybe) <- withModel $ \m ->
+        catMaybes <$> mapM (evalBool m) newVars
+      let display = unMaybe intMaybe ++ unMaybe boolMaybe ++ unMaybe arrayMaybe
+      return (result, display)
+
+    z3Ints = intersection z3vars intNames
+    z3Bools = intersection z3vars boolNames
+    z3Arrays = intersection z3vars arrayNames
+    onlyInts (PType PTInt) = True
+    onlyInts _ = False
+    onlyBools (PType PTBool) = True
+    onlyBools _ = False
+    onlyArrays (AType _) = True
+    onlyArrays _ = False
+    unMaybe m = maybe "" show m
+
+-- Turns a given expression into an AST
+z3Script :: MonadZ3 z3 => Expr -> (Map String Expr, Map String Type) -> z3 AST
+z3Script expr (vars, types) = evalExpr expr z3vars
+  where
+    z3vars = convertVarMap (vars, types)
+
+-- Returns the names of variables that are not set to a primitive value
+mutatedVariables :: Map String Expr -> [String]
+mutatedVariables vars = z3Environment
+  where
+    convert (key, Var name)
+      | key == name = [name]
+      | otherwise = []
+    convert (key, expr) = []
+    z3Environment = concatMap convert (toList vars)
+
+addExprVariable :: (Map String Expr, Map String Type) -> VarDeclaration -> (Map String Expr, Map String Type)
+addExprVariable (map, ts) (VarDeclaration name t@(PType _)) = (insert name (Var name) map, insert name t ts)
+addExprVariable (map, ts) (VarDeclaration name t@(AType _)) = (insert name (Var name) (insert ("#" ++ name) (Var ("#" ++ name)) map), insert name t (insert ("#" ++ name) (PType PTInt) ts))
+addExprVariable _ (VarDeclaration _ t) = error $ "This program does not support variables of type " ++ show t
 
 --
 -- SECTION 6
@@ -260,34 +361,101 @@ verifyTree tree = evalZ3 $ do
 --
 
 -- main loads the file and puts the ParseResult Program through the following functions
-run file = do
-  program <- parseGCLfile file
-  let k = 10
-  evaluateProgram program k
+arguments :: [[Char]] -> (Int, [Char], Bool, Bool)
+arguments [] = (10, "test/input/reverse.gcl", False, False)
+arguments ("-K" : arg : xs) = (read arg, a2, a3, a4)
+  where
+    (_, a2, a3, a4) = arguments xs
+arguments ("-file" : arg : xs) = (a1, arg, a3, a4)
+  where
+    (a1, _, a3, a4) = arguments xs
+arguments ("-wlp" : xs) = (a1, a2, True, a4)
+  where
+    (a1, a2, _, a4) = arguments xs
+arguments ("-path" : xs) = (a1, a2, a3, True)
+  where
+    (a1, a2, a3, _) = arguments xs
+arguments (x : xs) = arguments xs
 
-evaluateProgram (Left _) k = putStrLn "Unable to parse program"
-evaluateProgram (Right program) k = do
+run = do
+  args <- getArgs
+  let parsedArgs@(_, file, _, _) = arguments args
+  program <- parseGCLfile file
+  evaluateProgram program parsedArgs
+
+--Will return if all of the statements were correctly verified
+mapUntilSat :: ((Expr, ProgramPath Expr) -> (IO Result, ProgramPath Expr, Expr)) -> [(Expr, ProgramPath Expr)] -> IO (Result, ProgramPath Expr, Expr)
+mapUntilSat f [] = return (Unsat, EmptyPath (LitB True), LitB True)
+mapUntilSat f (x : xs) = do
+  let (r, path, wlp) = f x
+  result <- r
+  case result of
+    Sat -> return (Sat, path, wlp)
+    Unsat -> mapUntilSat f xs
+    Undef -> do
+      (others, otherPath, otherWlp) <- mapUntilSat f xs
+      case others of
+        Sat -> return (Sat, otherPath, otherWlp)
+        _ -> return (Undef, path, wlp)
+
+evaluateProgram (Left _) _ = putStrLn "Unable to parse program"
+evaluateProgram (Right program) (k, file, printWlp, printPath) = do
   let path = constructPath program
+  let locVars = findLocvars (stmt program)
   let flaggedPath = flagInvalid path k
 
   let pathsTooLong = numInvalid flaggedPath
-  putStrLn ("Results when using k=" ++ show k ++ " on the specified program:")
+  putStrLn ("Results when using k=" ++ show k ++ " on " ++ file ++ ":")
   putStrLn []
-  putStrLn ("Found a total of " ++ show (countBranches flaggedPath) ++ " possible program paths.")
+  putStrLn ("Found " ++ show (countBranches flaggedPath) ++ " paths.")
   putStrLn ("Of these paths, at least " ++ show pathsTooLong ++ " are infeasible as they are too long.")
   putStrLn []
-
-  putStrLn "Removing these infeasible paths..."
-  putStrLn []
   let clearedPath = removePaths path k
+  let cantBranch = numConditionFalse clearedPath
   putStrLn ("Reduced structure to " ++ show (countBranches clearedPath) ++ " paths.")
-  putStrLn "Evaluating this reduced structure gives:"
+  putStrLn ("Of these paths, " ++ show cantBranch ++ " can be pruned as their branch condition is the literal False. (TODO)")
+
+  -- Print path if the argument -path was specified
   putStrLn []
-  putStrLn (printTree clearedPath k)
+  when printPath $ putStrLn "The path is:"
+  when printPath $
+    putStrLn (printTree clearedPath k)
+  putStrLn "Evaluating the reduced structure gives:"
+  putStrLn []
 
-  let z3Path = treeExprToZ3 clearedPath
-  result <- verifyTree z3Path
-  putStrLn "All paths satisfiable?"
-  print result
+  -- Create a map with all the variables and an initial value of (Var name)
+  let (vars, varTypes) = foldl addExprVariable (empty, empty) (input program ++ output program ++ locVars)
 
---print path
+  -- Calculate the wlp and initial variable values over the tree
+  let wlpsInfo = calcWLP clearedPath vars
+  let wlps = map fst wlpsInfo
+  putStrLn "All defined variables are are:"
+  print (keys vars)
+  --putStrLn "Initial variable values are:"
+  --print (toList vars')
+  putStrLn "Z3 variables that will be created created to solve:"
+  print $
+    mutatedVariables vars
+  putStrLn []
+
+  putStrLn $
+    "Found " ++ show (length wlps) ++ " WLPs making for a total of " ++ show (sum (map numExprAtoms wlps)) ++ " atoms."
+
+  -- Print wlp and z3 script if -wlp was specified
+  when printWlp $ putStrLn "The WLPs are:"
+  when printWlp $ print wlps
+  --when printWlp $ putStrLn "The corresponding z3 scripts is:"
+  --script <- evalZ3 $ astToString =<< z3Script (OpNeg wlp) (vars, varTypes)
+  --when printWlp $ putStrLn script
+  putStrLn []
+
+  -- Print the result of the verification
+  (final, finalPath, finalWlp) <- mapUntilSat (\(wlp, path) -> (verifyExpr (OpNeg wlp) (vars, varTypes), path, wlp)) wlpsInfo
+  case final of
+    Unsat -> putStrLn "No counter examples for this program could be found."
+    Undef -> putStrLn "At least one of the paths returned Undef, but no counter examples for this program could be found."
+    Sat -> do
+      putStrLn ("Found this counterexample in the path: " ++ show finalPath)
+      putStrLn "The corresponding z3 scripts is:"
+      script <- evalZ3 $ astToString =<< z3Script (OpNeg finalWlp) (vars, varTypes)
+      putStrLn script
