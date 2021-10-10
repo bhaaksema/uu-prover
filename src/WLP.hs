@@ -2,8 +2,6 @@ module WLP where
 
 import Data.Map (Map, adjust, empty, fromList, insert, toList, (!))
 import GCLParser.GCLDatatype
-import GCLParser.Parser (ParseResult)
-import GHC.ResponseFile (expandResponse)
 import Z3.Monad
 
 wlp :: Stmt -> (Map String Expr -> Expr) -> Map String Expr -> Expr
@@ -90,7 +88,6 @@ convertVarMap (vars, types) = z3Environment
     createVariable _ typ = error ("Cannot create variable of unknown type " ++ show typ)
     z3Environment = fromList (map convert (toList vars))
 
--- TODO: size forall exists var
 evalExpr :: MonadZ3 z3 => Expr -> Map String (z3 AST) -> z3 AST
 evalExpr expr = evalExpr' (simplifyExpr expr)
 
