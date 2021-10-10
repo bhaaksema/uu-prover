@@ -4,7 +4,7 @@ import Data.Map (Map, empty, filter, insert, intersection, toList)
 import qualified Data.Map (map)
 import Data.Maybe (catMaybes, fromMaybe)
 import GCLParser.GCLDatatype
-import WLP (considerExpr, convertVarMap, evalExpr, simplifyExpr, wlp)
+import WLP (considerExpr, convertVarMap, evalExpr, simplifyExpr, traceVarExpr, wlp)
 import Z3.Monad
 
 data ProgramPath a
@@ -176,12 +176,14 @@ mapTree condFunc stmtFunc (TreePath cond stmt option1 option2) = TreePath (condF
 --
 
 countBranches :: Num p => ProgramPath a -> p
-countBranches (TreePath _ _ option1 option2) = countBranches option1 + countBranches option2 + 1
-countBranches _ = 0
+countBranches (TreePath _ _ option1 option2) = countBranches option1 + countBranches option2
+countBranches _ = 1
 
 --Returns the number of invalid nodes for a path of FIXED LENGTH
 numInvalid :: Num p => ProgramPath a -> p
-numInvalid = foldTreeStmt (\_ prev -> prev) 0 (+ 1)
+numInvalid (TreePath _ _ option1 option2) = numInvalid option1 + numInvalid option2
+numInvalid InvalidPath = 1
+numInvalid _ = 0
 
 --Returns the number of nodes with a condition of false for a path of FIXED LENGTH
 numConditionFalse :: Num p => ProgramPath Expr -> p
@@ -259,24 +261,46 @@ splitDepth tStmts depth = maybe 0 countStatements tStmts
 --
 
 evaluateFullTree :: ProgramPath Expr -> [(Map String Expr -> Expr, ProgramPath Expr)]
-evaluateFullTree (TreePath cond stmts option1 option2) = do
-  let expr1 = evaluateFullTree option1
-  let expr2 = evaluateFullTree option2
-  -- Calculates the wlp over branch node statements
-  -- If it has statements, runs wlp using the precondition of expr1, else just returns that precondition
-  let wlps1 = map concatPaths expr1
-  let wlps2 = map concatPaths expr2
-  wlps1 ++ wlps2
+evaluateFullTree treepath@(TreePath cond stmts option1 option2)
+  | cond == LitB False = []
+  | otherwise = do
+    let expr1 = evaluateFullTree option1
+    let expr2 = evaluateFullTree option2
+    -- Calculates the wlp over branch node statements
+    -- If it has statements, runs wlp using the precondition of expr1, else just returns that precondition
+    let wlps1 = map concatPaths expr1
+    let wlps2 = map concatPaths expr2
+    wlps1 ++ wlps2
   where
     myPath = maybe (EmptyPath cond) (LinearPath cond) stmts
     addCond wlp = \v -> simplifyExpr (BinopExpr Implication (considerExpr cond v) (wlp v))
     concatPaths (expr, path) = (addCond (maybe expr (`wlp` expr) stmts), combinePaths myPath path)
-evaluateFullTree linpath@(LinearPath cond stmts) = do
-  let path = wlp stmts (\v -> LitB True)
-  let condExpr = considerExpr cond
-  [(\vars -> simplifyExpr (BinopExpr Implication (condExpr vars) (path vars)), linpath)]
+evaluateFullTree linpath@(LinearPath cond stmts)
+  | cond == LitB False = []
+  | otherwise = do
+    let path = wlp stmts (\v -> LitB True)
+    let condExpr = considerExpr cond
+    [(\vars -> simplifyExpr (BinopExpr Implication (condExpr vars) (path vars)), linpath)]
 evaluateFullTree (EmptyPath cond) = [(const cond, EmptyPath cond)]
 evaluateFullTree InvalidPath = [(const (LitB False), InvalidPath)]
+
+evaluateTreeConds :: ProgramPath Expr -> (Map String Expr, Map String Type) -> IO (ProgramPath Expr)
+evaluateTreeConds (TreePath cond stmts option1 option2) (vars, types) = do
+  let evaluatedCond = considerExpr cond vars
+  condExpr <- z3Satisfiable evaluatedCond (vars, types)
+  let newVars = maybe vars (`traceVarExpr` vars) stmts
+  newTree1 <- evaluateTreeConds option1 (newVars, types)
+  newTree2 <- evaluateTreeConds option2 (newVars, types)
+  return (TreePath condExpr stmts newTree1 newTree2)
+evaluateTreeConds linpath@(LinearPath cond stmts) (vars, types) = do
+  let evaluatedCond = considerExpr cond vars
+  condExpr <- z3Satisfiable evaluatedCond (vars, types)
+  return $ LinearPath condExpr stmts
+evaluateTreeConds (EmptyPath cond) (vars, types) = do
+  let evaluatedCond = considerExpr cond vars
+  condExpr <- z3Satisfiable evaluatedCond (vars, types)
+  return $ EmptyPath condExpr
+evaluateTreeConds InvalidPath _ = return InvalidPath
 
 -- Calculates the WLP over a program path
 calcWLP :: ProgramPath Expr -> Map String Expr -> [(Expr, ProgramPath Expr)]
@@ -335,6 +359,20 @@ z3Script :: MonadZ3 z3 => Expr -> (Map String Expr, Map String Type) -> z3 AST
 z3Script expr (vars, types) = evalExpr expr z3vars
   where
     z3vars = convertVarMap (vars, types)
+
+z3Satisfiable :: Expr -> (Map String Expr, Map String Type) -> IO Expr
+z3Satisfiable expr (vars, types) =
+  evalZ3 script >>= \result ->
+    case result of
+      Sat -> return expr
+      _ -> return (LitB False)
+  where
+    z3vars = convertVarMap (vars, types)
+    script = do
+      reset
+      push
+      assert =<< evalExpr expr z3vars
+      check
 
 -- Returns the names of variables that are not set to a primitive value
 mutatedVariables :: Map String Expr -> [String]
