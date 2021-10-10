@@ -16,7 +16,7 @@ source-repository head
 
 library
   exposed-modules:
-      POC
+      Evaluator
       ProgramPath
       WLP
   other-modules:

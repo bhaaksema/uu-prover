@@ -1,6 +1,6 @@
 module Main where
 
-import ProgramPath (run)
+import Evaluator (run)
 
 main :: IO ()
-main = run "input/test/min.gcl"
+main = run
