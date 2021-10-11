@@ -284,14 +284,17 @@ evaluateFullTree linpath@(LinearPath cond stmts)
 evaluateFullTree (EmptyPath cond) = [(const cond, EmptyPath cond)]
 evaluateFullTree InvalidPath = [(const (LitB False), InvalidPath)]
 
-evaluateTreeConds :: ProgramPath Expr -> Map String (Expr) -> Map String (Z3 AST) -> IO (ProgramPath Expr)
+evaluateTreeConds :: ProgramPath Expr -> Map String Expr -> Map String (Z3 AST) -> IO (ProgramPath Expr)
 evaluateTreeConds (TreePath cond stmts option1 option2) vars varmap = do
   let evaluatedCond = considerExpr cond vars
   condExpr <- z3Satisfiable evaluatedCond varmap
   let newVars = maybe vars (`traceVarExpr` vars) stmts
-  newTree1 <- evaluateTreeConds option1 newVars varmap
-  newTree2 <- evaluateTreeConds option2 newVars varmap
-  return (TreePath condExpr stmts newTree1 newTree2)
+  case condExpr of
+    LitB False -> return (TreePath condExpr stmts option1 option2)
+    _ -> do
+      newTree1 <- evaluateTreeConds option1 newVars varmap
+      newTree2 <- evaluateTreeConds option2 newVars varmap
+      return (TreePath condExpr stmts newTree1 newTree2)
 evaluateTreeConds linpath@(LinearPath cond stmts) vars varmap = do
   let evaluatedCond = considerExpr cond vars
   condExpr <- z3Satisfiable evaluatedCond varmap

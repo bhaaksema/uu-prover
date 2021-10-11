@@ -67,7 +67,7 @@ evaluateProgram (Right program) (k, file, printWlp, printPath) = do
 
   -- Create a map with all the variables and an initial value of (Var name)
   let (vars, varTypes) = foldl addExprVariable (empty, empty) (input program ++ output program ++ locVars)
-  let varmap = convertVarMap (vars, varTypes)
+  let varmap = convertVarMap varTypes
   condPath <- evaluateTreeConds clearedPath vars varmap
   let cantBranch = numConditionFalse condPath
 

@@ -67,22 +67,16 @@ traceVarExpr (AAssign name indexE expr) vars = do
 traceVarExpr _ vars = vars
 
 -- Runs the given expression and environment map through Z3
-verifyExpr :: Expr -> (Map String Expr, Map String Type) -> IO Result
+verifyExpr :: Expr -> Map String Type -> IO Result
 verifyExpr expr vars = evalZ3 $ do
   assert =<< evalExpr expr (convertVarMap vars)
   check
 
 -- Turns an expression environment from GCL variables to Z3 variables
-convertVarMap :: MonadZ3 z3 => (Map String Expr, Map String Type) -> Map String (z3 AST)
-convertVarMap (vars, types) = z3Environment
+convertVarMap :: MonadZ3 z3 => Map String Type -> Map String (z3 AST)
+convertVarMap types = z3Environment
   where
-    convert (key, Var name)
-      | key == name = (key, createVariable name (types ! name))
-      | otherwise = (key, evalExpr (Var name) z3Environment)
-    convert (key, expr)
-      | types ! key == AType PTInt = convert (key, Var key)
-      | types ! key == AType PTBool = convert (key, Var key)
-      | otherwise = (key, evalExpr expr z3Environment)
+    convert (key, _) = (key, createVariable key (types ! key))
     createVariable name (PType PTInt) = do
       sym <- mkStringSymbol name
       mkIntVar sym
@@ -101,7 +95,7 @@ convertVarMap (vars, types) = z3Environment
       sym <- mkStringSymbol name
       mkConst sym aSort
     createVariable _ typ = error ("Cannot create variable of unknown type " ++ show typ)
-    z3Environment = fromList (map convert (toList vars))
+    z3Environment = fromList (map convert (toList types))
 
 evalExpr :: MonadZ3 z3 => Expr -> Map String (z3 AST) -> z3 AST
 evalExpr expr = evalExpr' (simplifyExpr expr)
