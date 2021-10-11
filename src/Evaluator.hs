@@ -14,7 +14,7 @@ import Z3.Monad (Result (..), astToString, evalZ3)
 -- The following functions will run the 'main' program and output the required information
 -- main loads the file and puts the ParseResult Program through the following functions
 arguments :: [[Char]] -> (Int, [Char], Bool, Bool)
-arguments [] = (10, "input/demo/pullUp.gcl", False, False)
+arguments [] = (10, "input/test/reverse.gcl", False, False)
 arguments ("-K" : arg : xs) = (read arg, a2, a3, a4)
   where
     (_, a2, a3, a4) = arguments xs
@@ -73,9 +73,6 @@ evaluateProgram (Right program) (k, file, printWlp, printPath) = do
   let wlpsInfo = calcWLP clearedPath vars
   let wlps = map fst wlpsInfo
 
-  -- Stop computation time counter
-  end <- getCPUTime
-
   -- Print path if the argument -path was specified
   when printPath $ putStrLn "The path is:"
   when printPath $
@@ -109,9 +106,7 @@ evaluateProgram (Right program) (k, file, printWlp, printPath) = do
 
   -- Statistics
   putStrLn ("inspected paths: " ++ show (countBranches flaggedPath))
-  putStrLn ("unfeasable paths: " ++ show pathsTooLong ++ " (exceeded length)")
-  let diff = fromIntegral (end - start) / (10 ^ 9)
-  printf "computation time: %0.3f ms\n" (diff :: Double)
+  putStrLn ("unfeasible paths: " ++ show pathsTooLong ++ " (exceeded length)")
   putStrLn ("formula size (atoms): " ++ show (sum (map numExprAtoms wlps)) ++ " from " ++ show (length wlps) ++ " wlps")
 
   -- Print the result of the verification
@@ -125,3 +120,8 @@ evaluateProgram (Right program) (k, file, printWlp, printPath) = do
       putStrLn "corresponding z3 script is:"
       script <- evalZ3 $ astToString =<< z3Script (OpNeg finalWlp) (vars, varTypes)
       putStrLn script
+
+  -- Stop computation time counter
+  end <- getCPUTime
+  let diff = fromIntegral (end - start) / (10 ^ 9)
+  printf "computation time: %0.3f ms\n" (diff :: Double)
