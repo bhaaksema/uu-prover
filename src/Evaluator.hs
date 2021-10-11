@@ -1,129 +1,135 @@
+{-# LANGUAGE LambdaCase #-}
+
 module Evaluator where
 
-import Control.Monad (when)
-import Data.Map (empty, keys, toList)
+import Data.Map (Map, filter, insert, intersection, toList)
+import Data.Maybe (catMaybes)
 import GCLParser.GCLDatatype
-import GCLParser.Parser (parseGCLfile)
-import ProgramPath
-import System.CPUTime (getCPUTime)
-import System.Environment (getArgs)
-import Text.Printf (printf)
-import WLP (convertVarMap, findLocvars, numExprAtoms)
-import Z3.Monad (Result (..), astToString, evalZ3)
+import ProgramPath (ProgramPath (..), combinePaths)
+import WLP (considerExpr, evalExpr, simplifyExpr, traceVarExpr, wlp)
+import Z3.Monad
 
--- The following functions will run the 'main' program and output the required information
--- main loads the file and puts the ParseResult Program through the following functions
-arguments :: [[Char]] -> (Int, [Char], Bool, Bool)
-arguments [] = (10, "input/test/reverse.gcl", False, False)
-arguments ("-K" : arg : xs) = (read arg, a2, a3, a4)
+evaluateFullTree :: ProgramPath Expr -> [(Map String Expr -> Expr, ProgramPath Expr)]
+evaluateFullTree treepath@(TreePath cond stmts option1 option2)
+  | cond == LitB False = []
+  | otherwise = do
+    let expr1 = evaluateFullTree option1
+    let expr2 = evaluateFullTree option2
+    -- Calculates the wlp over branch node statements
+    -- If it has statements, runs wlp using the precondition of expr1, else just returns that precondition
+    let wlps1 = map concatPaths expr1
+    let wlps2 = map concatPaths expr2
+    wlps1 ++ wlps2
   where
-    (_, a2, a3, a4) = arguments xs
-arguments ("-file" : arg : xs) = (a1, arg, a3, a4)
+    myPath = maybe (EmptyPath cond) (LinearPath cond) stmts
+    addCond wlp = \v -> simplifyExpr (BinopExpr Implication (considerExpr cond v) (wlp v))
+    concatPaths (expr, path) = (addCond (maybe expr (`wlp` expr) stmts), combinePaths myPath path)
+evaluateFullTree linpath@(LinearPath cond stmts)
+  | cond == LitB False = []
+  | otherwise = do
+    let path = wlp stmts (\v -> LitB True)
+    let condExpr = considerExpr cond
+    [(\vars -> simplifyExpr (BinopExpr Implication (condExpr vars) (path vars)), linpath)]
+evaluateFullTree (EmptyPath cond) = [(const cond, EmptyPath cond)]
+evaluateFullTree InvalidPath = [(const (LitB False), InvalidPath)]
+
+evaluateTreeConds :: ProgramPath Expr -> Map String Expr -> Map String (Z3 AST) -> IO (ProgramPath Expr)
+evaluateTreeConds (TreePath cond stmts option1 option2) vars varmap = do
+  let evaluatedCond = considerExpr cond vars
+  condExpr <- z3Satisfiable evaluatedCond varmap
+  let newVars = maybe vars (`traceVarExpr` vars) stmts
+  newTree1 <- evaluateTreeConds option1 newVars varmap
+  newTree2 <- evaluateTreeConds option2 newVars varmap
+  return (TreePath condExpr stmts newTree1 newTree2)
+evaluateTreeConds linpath@(LinearPath cond stmts) vars varmap = do
+  let evaluatedCond = considerExpr cond vars
+  condExpr <- z3Satisfiable evaluatedCond varmap
+  return $ LinearPath condExpr stmts
+evaluateTreeConds (EmptyPath cond) vars varmap = do
+  let evaluatedCond = considerExpr cond vars
+  condExpr <- z3Satisfiable evaluatedCond varmap
+  return $ EmptyPath condExpr
+evaluateTreeConds InvalidPath _ _ = return InvalidPath
+
+-- Calculates the WLP over a program path
+calcWLP :: ProgramPath Expr -> Map String Expr -> [(Expr, ProgramPath Expr)]
+calcWLP tree vars = do
+  let wlpsAndTrees = evaluateFullTree tree
+  map (\(expr, path) -> (simplifyExpr (expr vars), path)) wlpsAndTrees
+
+-- Outputs if an expression can be contradicted. If so, also outputs how
+verifyExpr :: Expr -> (Map String (Z3 AST), Map String Type) -> IO Result
+verifyExpr expr (z3vars, types) =
+  evalZ3 script >>= \(result, sol) ->
+    case result of
+      Sat -> do
+        putStrLn "counterexample found: "
+          >> putStrLn "ints, bools, arrays"
+          >> putStrLn (show (map fst (toList intNames)) ++ show (map fst (toList boolNames)) ++ show (map fst (toList arrayNames)))
+          >> putStrLn sol
+          >> putStrLn []
+        return result
+      _ -> return result
   where
-    (a1, _, a3, a4) = arguments xs
-arguments ("-wlp" : xs) = (a1, a2, True, a4)
+    intNames = Data.Map.filter onlyInts types
+    boolNames = Data.Map.filter onlyBools types
+    arrayNames = Data.Map.filter onlyArrays types
+    script = do
+      reset
+      push
+      assert =<< evalExpr expr z3vars
+      newVars <- mapM snd (toList z3Ints)
+      (_, intMaybe) <- withModel $ \m ->
+        catMaybes <$> mapM (evalInt m) newVars
+
+      newVars <- mapM snd (toList z3Arrays)
+      (_, arrayMaybe) <- withModel $ \m ->
+        map interpMap <$> (catMaybes <$> mapM (evalArray m) newVars)
+
+      newVars <- mapM snd (toList z3Bools)
+      (result, boolMaybe) <- withModel $ \m ->
+        catMaybes <$> mapM (evalBool m) newVars
+      let display = unMaybe intMaybe ++ unMaybe boolMaybe ++ unMaybe arrayMaybe
+      return (result, display)
+
+    z3Ints = intersection z3vars intNames
+    z3Bools = intersection z3vars boolNames
+    z3Arrays = intersection z3vars arrayNames
+    onlyInts (PType PTInt) = True
+    onlyInts _ = False
+    onlyBools (PType PTBool) = True
+    onlyBools _ = False
+    onlyArrays (AType _) = True
+    onlyArrays _ = False
+    unMaybe m = maybe "" show m
+
+-- Turns a given expression into an AST
+z3Script :: Expr -> Map String (Z3 AST) -> Z3 AST
+z3Script = evalExpr
+
+z3Satisfiable :: Expr -> Map String (Z3 AST) -> IO Expr
+z3Satisfiable expr varmap = do
+  evalZ3 script >>= \case
+    Sat -> return expr
+    _ -> return (LitB False)
   where
-    (a1, a2, _, a4) = arguments xs
-arguments ("-path" : xs) = (a1, a2, a3, True)
+    script = do
+      reset
+      push
+      assert =<< evalExpr expr varmap
+      check
+
+-- Returns the names of variables that are not set to a primitive value
+mutatedVariables :: Map String Expr -> [String]
+mutatedVariables vars = z3Environment
   where
-    (a1, a2, a3, _) = arguments xs
-arguments (x : xs) = arguments xs
+    convert (key, Var name)
+      | key == name = [name]
+      | otherwise = []
+    convert (key, expr) = []
+    z3Environment = concatMap convert (toList vars)
 
-run :: IO ()
-run = do
-  args <- getArgs
-  let parsedArgs@(_, file, _, _) = arguments args
-  program <- parseGCLfile file
-  evaluateProgram program parsedArgs
-
--- Will return if all of the statements were correctly verified
-mapUntilSat :: ((Expr, ProgramPath Expr) -> (IO Result, ProgramPath Expr, Expr)) -> [(Expr, ProgramPath Expr)] -> IO (Result, ProgramPath Expr, Expr)
-mapUntilSat f [] = return (Unsat, EmptyPath (LitB True), LitB True)
-mapUntilSat f (x : xs) = do
-  let (r, path, wlp) = f x
-  result <- r
-  case result of
-    Sat -> return (Sat, path, wlp)
-    Unsat -> mapUntilSat f xs
-    Undef -> do
-      (others, otherPath, otherWlp) <- mapUntilSat f xs
-      case others of
-        Sat -> return (Sat, otherPath, otherWlp)
-        _ -> return (Undef, path, wlp)
-
-evaluateProgram :: Either a Program -> (Int, [Char], Bool, Bool) -> IO ()
-evaluateProgram (Left _) _ = putStrLn "unable to parse program"
-evaluateProgram (Right program) (k, file, printWlp, printPath) = do
-  putStrLn ("verifying " ++ file ++ " for k = " ++ show k)
-  putStrLn []
-
-  -- Start computation time counter
-  start <- getCPUTime
-  let path = constructPath program
-  let locVars = findLocvars (stmt program)
-  let flaggedPath = flagInvalid path k
-  let pathsTooLong = numInvalid flaggedPath
-  let clearedPath = removePaths path k
-
-  -- Create a map with all the variables and an initial value of (Var name)
-  let (vars, varTypes) = foldl addExprVariable (empty, empty) (input program ++ output program ++ locVars)
-  let varmap = convertVarMap (vars, varTypes)
-  condPath <- evaluateTreeConds clearedPath vars varmap
-  let cantBranch = numConditionFalse condPath
-
-  -- Calculate the wlp and initial variable values over the tree
-  let wlpsInfo = calcWLP condPath vars
-  let wlps = map fst wlpsInfo
-
-  -- Print path if the argument -path was specified
-  when printPath $ putStrLn "The path is:"
-  when printPath $
-    putStrLn (printTree condPath k)
-
-  -- Print wlp and z3 script if -wlp was specified
-  when printWlp $ putStrLn "The WLPs are:"
-  when printWlp $ print wlps
-
-  -- START DEBUG STATEMENTS
-  -- putStrLn []
-  -- putStrLn ("Reduced structure to " ++ show (countBranches clearedPath) ++ " paths.")
-  -- putStrLn ("Of these paths, at least " ++ show cantBranch ++ " won't be evaluated as their branch condition evaluates to False. (possibly more because of subpaths)")
-
-  -- putStrLn "Evaluating the reduced structure gives:"
-  -- putStrLn []
-
-  -- putStrLn "All defined variables are are:"
-  -- print (keys vars)
-  -- putStrLn "Initial variable values are:"
-  -- print (toList vars')
-  -- putStrLn "Z3 variables that will be created created to solve:"
-  -- print $
-  --   mutatedVariables vars
-  -- putStrLn []
-
-  -- when printWlp $ putStrLn "The corresponding z3 scripts is:"
-  -- script <- evalZ3 $ astToString =<< z3Script (OpNeg wlp) (vars, varTypes)
-  -- when printWlp $ putStrLn script
-  -- END DEBUG STATEMENTS
-
-  -- Statistics
-  putStrLn ("inspected paths: " ++ show (countBranches flaggedPath))
-  putStrLn ("unfeasible paths: " ++ show pathsTooLong ++ " (exceeded length)")
-  putStrLn ("formula size (atoms): " ++ show (sum (map numExprAtoms wlps)) ++ " from " ++ show (length wlps) ++ " wlps")
-
-  -- Print the result of the verification
-  putStrLn []
-  (final, finalPath, finalWlp) <- mapUntilSat (\(wlp, path) -> (verifyExpr (OpNeg wlp) (varmap, varTypes), path, wlp)) wlpsInfo
-  case final of
-    Unsat -> putStrLn "accept (could not find any counterexamples)"
-    Undef -> putStrLn "undef (at least one path returned undef, but could not find any counteraxamples)"
-    Sat -> do
-      putStrLn ("reject (counterexample in path: " ++ show finalPath ++ ")")
-      putStrLn "corresponding z3 script is:"
-      script <- evalZ3 $ astToString =<< z3Script (OpNeg finalWlp) varmap
-      putStrLn script
-
-  -- Stop computation time counter
-  end <- getCPUTime
-  let diff = fromIntegral (end - start) / (10 ^ 9)
-  printf "computation time: %0.3f ms\n" (diff :: Double)
+addExprVariable :: (Map String Expr, Map String Type) -> VarDeclaration -> (Map String Expr, Map String Type)
+addExprVariable (map, ts) (VarDeclaration name t@(PType _)) = (insert name (Var name) map, insert name t ts)
+addExprVariable (map, ts) (VarDeclaration name t@(AType _)) = (insert name (Var name) (insert ("#" ++ name) (Var ("#" ++ name)) map), insert name t (insert ("#" ++ name) (PType PTInt) ts))
+addExprVariable _ (VarDeclaration _ t) = error $ "This program does not support variables of type " ++ show t

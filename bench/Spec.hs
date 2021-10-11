@@ -1,7 +1,7 @@
 module Spec where
 
 import Criterion.Main (bench, defaultMain, nfIO)
-import Evaluator (run)
+import Verifier (run)
 import System.Directory (listDirectory)
 
 main :: IO ()
