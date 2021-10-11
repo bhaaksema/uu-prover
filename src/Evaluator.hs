@@ -6,7 +6,7 @@ import GCLParser.GCLDatatype
 import GCLParser.Parser (parseGCLfile)
 import ProgramPath
 import System.Environment (getArgs)
-import WLP (findLocvars, numExprAtoms)
+import WLP (convertVarMap, findLocvars, numExprAtoms)
 import Z3.Monad (Result (..), astToString, evalZ3)
 
 -- The following functions will run the 'main' program and output the required information
@@ -104,12 +104,12 @@ evaluateProgram (Right program) (k, file, printWlp, printPath) = do
   putStrLn []
 
   -- Print the result of the verification
-  (final, finalPath, finalWlp) <- mapUntilSat (\(wlp, path) -> (verifyExpr (OpNeg wlp) (vars, varTypes), path, wlp)) wlpsInfo
+  (final, finalPath, finalWlp) <- mapUntilSat (\(wlp, path) -> (verifyExpr (OpNeg wlp) (varmap, varTypes), path, wlp)) wlpsInfo
   case final of
     Unsat -> putStrLn "No counter examples for this program could be found."
     Undef -> putStrLn "At least one of the paths returned Undef, but no counter examples for this program could be found."
     Sat -> do
       putStrLn ("Found this counterexample in the path: " ++ show finalPath)
       putStrLn "The corresponding z3 scripts is:"
-      script <- evalZ3 $ astToString =<< z3Script (OpNeg finalWlp) (vars, varTypes)
+      script <- evalZ3 $ astToString =<< z3Script (OpNeg finalWlp) varmap
       putStrLn script

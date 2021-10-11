@@ -309,8 +309,8 @@ calcWLP tree vars = do
   map (\(expr, path) -> (simplifyExpr (expr vars), path)) wlpsAndTrees
 
 -- Outputs if an expression can be contradicted. If so, also outputs how
-verifyExpr :: Expr -> (Map String Expr, Map String Type) -> IO Result
-verifyExpr expr (vars, types) =
+verifyExpr :: Expr -> (Map String (Z3 AST), Map String Type) -> IO Result
+verifyExpr expr (z3vars, types) =
   evalZ3 script >>= \(result, sol) ->
     case result of
       Sat -> do
@@ -321,7 +321,6 @@ verifyExpr expr (vars, types) =
         return result
       _ -> return result
   where
-    z3vars = convertVarMap (vars, types)
     intNames = Data.Map.filter onlyInts types
     boolNames = Data.Map.filter onlyBools types
     arrayNames = Data.Map.filter onlyArrays types
@@ -355,10 +354,8 @@ verifyExpr expr (vars, types) =
     unMaybe m = maybe "" show m
 
 -- Turns a given expression into an AST
-z3Script :: MonadZ3 z3 => Expr -> (Map String Expr, Map String Type) -> z3 AST
-z3Script expr (vars, types) = evalExpr expr z3vars
-  where
-    z3vars = convertVarMap (vars, types)
+z3Script :: Expr -> Map String (Z3 AST) -> Z3 AST
+z3Script = evalExpr
 
 z3Satisfiable :: Expr -> Map String (Z3 AST) -> IO Expr
 z3Satisfiable expr varmap = do
