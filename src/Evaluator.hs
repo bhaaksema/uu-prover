@@ -8,7 +8,7 @@ import ProgramPath
 import System.CPUTime (getCPUTime)
 import System.Environment (getArgs)
 import Text.Printf (printf)
-import WLP (findLocvars, numExprAtoms)
+import WLP (convertVarMap, findLocvars, numExprAtoms)
 import Z3.Monad (Result (..), astToString, evalZ3)
 
 -- The following functions will run the 'main' program and output the required information
@@ -64,19 +64,18 @@ evaluateProgram (Right program) (k, file, printWlp, printPath) = do
   let flaggedPath = flagInvalid path k
   let pathsTooLong = numInvalid flaggedPath
   let clearedPath = removePaths path k
-  let cantBranch = numConditionFalse clearedPath
-
-  -- Create a map with all the variables and an initial value of (Var name)
-  let (vars, varTypes) = foldl addExprVariable (empty, empty) (input program ++ output program ++ locVars)
+  let varmap = convertVarMap (vars, varTypes)
+  condPath <- evaluateTreeConds clearedPath vars varmap
+  let cantBranch = numConditionFalse condPath
 
   -- Calculate the wlp and initial variable values over the tree
-  let wlpsInfo = calcWLP clearedPath vars
+  let wlpsInfo = calcWLP condPath vars
   let wlps = map fst wlpsInfo
 
   -- Print path if the argument -path was specified
   when printPath $ putStrLn "The path is:"
   when printPath $
-    putStrLn (printTree clearedPath k)
+    putStrLn (printTree condPath k)
 
   -- Print wlp and z3 script if -wlp was specified
   when printWlp $ putStrLn "The WLPs are:"
@@ -85,7 +84,7 @@ evaluateProgram (Right program) (k, file, printWlp, printPath) = do
   -- START DEBUG STATEMENTS
   -- putStrLn []
   -- putStrLn ("Reduced structure to " ++ show (countBranches clearedPath) ++ " paths.")
-  -- putStrLn ("Of these paths, " ++ show cantBranch ++ " can be pruned as their branch condition is the literal False. (TODO)")
+  -- putStrLn ("Of these paths, at least " ++ show cantBranch ++ " won't be evaluated as their branch condition evaluates to False. (possibly more because of subpaths)")
 
   -- putStrLn "Evaluating the reduced structure gives:"
   -- putStrLn []
@@ -99,9 +98,9 @@ evaluateProgram (Right program) (k, file, printWlp, printPath) = do
   --   mutatedVariables vars
   -- putStrLn []
 
-  --when printWlp $ putStrLn "The corresponding z3 scripts is:"
-  --script <- evalZ3 $ astToString =<< z3Script (OpNeg wlp) (vars, varTypes)
-  --when printWlp $ putStrLn script
+  -- when printWlp $ putStrLn "The corresponding z3 scripts is:"
+  -- script <- evalZ3 $ astToString =<< z3Script (OpNeg wlp) (vars, varTypes)
+  -- when printWlp $ putStrLn script
   -- END DEBUG STATEMENTS
 
   -- Statistics
@@ -111,14 +110,14 @@ evaluateProgram (Right program) (k, file, printWlp, printPath) = do
 
   -- Print the result of the verification
   putStrLn []
-  (final, finalPath, finalWlp) <- mapUntilSat (\(wlp, path) -> (verifyExpr (OpNeg wlp) (vars, varTypes), path, wlp)) wlpsInfo
+  (final, finalPath, finalWlp) <- mapUntilSat (\(wlp, path) -> (verifyExpr (OpNeg wlp) (varmap, varTypes), path, wlp)) wlpsInfo
   case final of
     Unsat -> putStrLn "accept (could not find any counterexamples)"
     Undef -> putStrLn "undef (at least one path returned undef, but could not find any counteraxamples)"
     Sat -> do
       putStrLn ("reject (counterexample in path: " ++ show finalPath ++ ")")
       putStrLn "corresponding z3 script is:"
-      script <- evalZ3 $ astToString =<< z3Script (OpNeg finalWlp) (vars, varTypes)
+      script <- evalZ3 $ astToString =<< z3Script (OpNeg finalWlp) varmap
       putStrLn script
 
   -- Stop computation time counter
