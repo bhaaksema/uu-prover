@@ -51,6 +51,21 @@ considerExpr' (Exists locvarName expr) vars = Exists locvarName (considerExpr ex
     boundedVars = insert locvarName (Var locvarName) vars
 considerExpr' e _ = error ("Unknown expression '" ++ show e ++ "'")
 
+traceVarExpr :: Stmt -> Map String Expr -> Map String Expr
+traceVarExpr (Seq stmt1 stmt2) vars = do
+  let vars1 = traceVarExpr stmt1 vars --Variables after statement 1
+  let vars2 = traceVarExpr stmt2 vars1 --Variables after statement 2
+  vars2
+traceVarExpr (Assign name expr) vars = do
+  let value = considerExpr expr vars
+  insert name value vars
+traceVarExpr (AAssign name indexE expr) vars = do
+  let array = vars ! name
+  let value = considerExpr expr vars
+  let index = considerExpr indexE vars
+  insert name (RepBy array index value) vars
+traceVarExpr _ vars = vars
+
 -- Runs the given expression and environment map through Z3
 verifyExpr :: Expr -> (Map String Expr, Map String Type) -> IO Result
 verifyExpr expr vars = evalZ3 $ do

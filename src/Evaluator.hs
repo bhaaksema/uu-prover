@@ -6,7 +6,7 @@ import GCLParser.GCLDatatype
 import GCLParser.Parser (parseGCLfile)
 import ProgramPath
 import System.Environment (getArgs)
-import WLP (findLocvars, numExprAtoms)
+import WLP (convertVarMap, findLocvars, numExprAtoms)
 import Z3.Monad (Result (..), astToString, evalZ3)
 
 -- The following functions will run the 'main' program and output the required information
@@ -56,6 +56,9 @@ evaluateProgram (Right program) (k, file, printWlp, printPath) = do
   let locVars = findLocvars (stmt program)
   let flaggedPath = flagInvalid path k
 
+  -- Create a map with all the variables and an initial value of (Var name)
+  let (vars, varTypes) = foldl addExprVariable (empty, empty) (input program ++ output program ++ locVars)
+
   let pathsTooLong = numInvalid flaggedPath
   putStrLn ("Results when using k=" ++ show k ++ " on " ++ file ++ ":")
   putStrLn []
@@ -63,23 +66,22 @@ evaluateProgram (Right program) (k, file, printWlp, printPath) = do
   putStrLn ("Of these paths, at least " ++ show pathsTooLong ++ " are infeasible as they are too long.")
   putStrLn []
   let clearedPath = removePaths path k
-  let cantBranch = numConditionFalse clearedPath
   putStrLn ("Reduced structure to " ++ show (countBranches clearedPath) ++ " paths.")
-  putStrLn ("Of these paths, " ++ show cantBranch ++ " can be pruned as their branch condition is the literal False. (TODO)")
+  let varmap = convertVarMap (vars, varTypes)
+  condPath <- evaluateTreeConds clearedPath vars varmap
+  let cantBranch = numConditionFalse condPath
+  putStrLn ("Of these paths, at least " ++ show cantBranch ++ " won't be evaluated as their branch condition evaluates to False. (possibly more because of subpaths)")
 
   -- Print path if the argument -path was specified
   putStrLn []
   when printPath $ putStrLn "The path is:"
   when printPath $
-    putStrLn (printTree clearedPath k)
+    putStrLn (printTree condPath k)
   putStrLn "Evaluating the reduced structure gives:"
   putStrLn []
 
-  -- Create a map with all the variables and an initial value of (Var name)
-  let (vars, varTypes) = foldl addExprVariable (empty, empty) (input program ++ output program ++ locVars)
-
   -- Calculate the wlp and initial variable values over the tree
-  let wlpsInfo = calcWLP clearedPath vars
+  let wlpsInfo = calcWLP condPath vars
   let wlps = map fst wlpsInfo
   putStrLn "All defined variables are are:"
   print (keys vars)
@@ -102,12 +104,12 @@ evaluateProgram (Right program) (k, file, printWlp, printPath) = do
   putStrLn []
 
   -- Print the result of the verification
-  (final, finalPath, finalWlp) <- mapUntilSat (\(wlp, path) -> (verifyExpr (OpNeg wlp) (vars, varTypes), path, wlp)) wlpsInfo
+  (final, finalPath, finalWlp) <- mapUntilSat (\(wlp, path) -> (verifyExpr (OpNeg wlp) (varmap, varTypes), path, wlp)) wlpsInfo
   case final of
     Unsat -> putStrLn "No counter examples for this program could be found."
     Undef -> putStrLn "At least one of the paths returned Undef, but no counter examples for this program could be found."
     Sat -> do
       putStrLn ("Found this counterexample in the path: " ++ show finalPath)
       putStrLn "The corresponding z3 scripts is:"
-      script <- evalZ3 $ astToString =<< z3Script (OpNeg finalWlp) (vars, varTypes)
+      script <- evalZ3 $ astToString =<< z3Script (OpNeg finalWlp) varmap
       putStrLn script
