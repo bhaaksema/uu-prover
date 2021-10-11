@@ -64,6 +64,9 @@ evaluateProgram (Right program) (k, file, printWlp, printPath) = do
   let flaggedPath = flagInvalid path k
   let pathsTooLong = numInvalid flaggedPath
   let clearedPath = removePaths path k
+
+  -- Create a map with all the variables and an initial value of (Var name)
+  let (vars, varTypes) = foldl addExprVariable (empty, empty) (input program ++ output program ++ locVars)
   let varmap = convertVarMap (vars, varTypes)
   condPath <- evaluateTreeConds clearedPath vars varmap
   let cantBranch = numConditionFalse condPath
