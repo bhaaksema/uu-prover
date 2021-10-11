@@ -1,10 +1,11 @@
-module Main where
+module Spec where
 
 import Criterion.Main (bench, defaultMain, nfIO)
-import ProgramPath (run)
+import Evaluator (run)
 import System.Directory (listDirectory)
 
 main :: IO ()
 main = do
-  files <- listDirectory "input/bench/"
-  defaultMain [bench file $ nfIO (run ("input/bench/" ++ file)) | file <- files]
+  let dir = "input/bench/"
+  files <- listDirectory dir
+  defaultMain [bench file $ nfIO (run (dir ++ file)) | file <- files]
