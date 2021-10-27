@@ -30,26 +30,44 @@ data ProgramPath a
 
 --Function that will transform a Program into a ProgramPath
 constructPath :: Program -> ProgramPath Expr
-constructPath program = _constructPath (stmt program)
+constructPath program = _constructPath (listify $ stmt program)
 
 --Function that will transform a statement into a ProgramPath
-_constructPath :: Stmt -> ProgramPath Expr
-_constructPath (IfThenElse expr ifStmt elseStmt) = TreePath (LitB True) Nothing (injectExpression expr ifPath) (injectExpression (OpNeg expr) elsePath)
+_constructPath :: [Stmt] -> ProgramPath Expr
+_constructPath ((IfThenElse expr ifStmt elseStmt) : stmts) = TreePath (LitB True) Nothing (injectExpression expr ifPath) (injectExpression (OpNeg expr) elsePath)
   where
-    ifPath = _constructPath ifStmt
-    elsePath = _constructPath elseStmt
-_constructPath (While expr stmt) = TreePath (LitB True) Nothing (EmptyPath (OpNeg expr)) runs
+    ifPath = _constructPath $ listify ifStmt ++ stmts
+    elsePath = _constructPath $ listify elseStmt ++ stmts
+_constructPath ((While expr stmt) : stmts) = tree
   where
-    stmtTree = _constructPath stmt --Construct a path of the inner statement. This is required because there may be nested special environments.
-    runs = combinePaths stmtTree (TreePath expr Nothing runOnce runMore) --Construct paths for when the while runs
-    runOnce = EmptyPath (OpNeg expr)
-    runMore = _constructPath (While expr stmt)
-_constructPath (Seq stmt nextStmt) = combinePaths s1 s2
-  where
-    s1 = _constructPath stmt
-    s2 = _constructPath nextStmt
-_constructPath (Block vars stmt) = _constructPath stmt --TODO This may miss out on some variables! Needs checking
-_constructPath stmt = LinearPath (LitB True) stmt
+    tree = TreePath (LitB True) Nothing skipWhile runs
+    stmtTree = _constructPath $ listify stmt --Construct a path of the inner statement. This is required because there may be nested special environments.
+    skipWhile = injectExpression (OpNeg expr) (_constructPath stmts)
+    runs = combinePaths stmtTree (TreePath expr Nothing skipWhile runs) --Construct paths for when the while runs
+_constructPath ((Block vars stmt) : stmts) = error $ "Found unfiltered block! \r\n" ++ show stmt --Block should be filtered out during splitList
+_constructPath (stmt : stmts) = combinePaths (LinearPath (LitB True) stmt) $ _constructPath stmts
+_constructPath [] = EmptyPath (LitB True)
+
+unrollSeq (Seq s1 s2) = unrollSeq s1 ++ unrollSeq s2
+unrollSeq s = [s]
+
+listify allStmts = splitList (unrollSeq allStmts)
+
+splitList allStmts = splitList' allStmts []
+
+splitList' [] [] = []
+splitList' [] stmts = rollSeqr stmts
+splitList' (w@While {} : statements) stmts = rollSeqr stmts ++ (w : splitList statements)
+splitList' (w@IfThenElse {} : statements) stmts = rollSeqr stmts ++ (w : splitList statements)
+splitList' ((Block _ stmt) : statements) stmts = splitList' (listify stmt ++ statements) stmts --Take code out of the block, and process as its own entity
+splitList' (s : statements) stmts = splitList' statements (s : stmts)
+
+rollSeqr [] = []
+rollSeqr stmts = [rollSeql $ reverse stmts]
+
+rollSeql [s] = s
+rollSeql (s : ss) = Seq s (rollSeql ss)
+rollSeql [] = error "Cannot roll empty array"
 
 --Injects the given expression into the condition for the given path
 injectExpression :: Expr -> ProgramPath Expr -> ProgramPath Expr
@@ -96,14 +114,14 @@ _removePaths (TreePath cond tStmts pathA pathB) depth
     newB = removePaths pathB remDepth --Evaluate path B, see if it is feasible given the depth
     pruneInvalidBranch (TreePath cond _ InvalidPath InvalidPath) = InvalidPath --Invalidate path if both branches are unfeasible
     --
-    pruneInvalidBranch (TreePath condA (Just tStmts) InvalidPath (LinearPath condB stmt)) = LinearPath (BinopExpr And condA condB) (Seq tStmts stmt) --Linearise a branch if only one of the paths is feasible
-    pruneInvalidBranch (TreePath condA Nothing InvalidPath (LinearPath condB stmt)) = LinearPath (BinopExpr And condA condB) stmt --Linearise a branch if only one of the paths is feasible
-    pruneInvalidBranch (TreePath condA tStmts linpath@LinearPath {} InvalidPath) = pruneInvalidBranch (TreePath condA tStmts InvalidPath linpath) --Swap arguments and run previous case
-    --
-    pruneInvalidBranch (TreePath condA (Just tStmts) InvalidPath (TreePath condB (Just stmt) option1 option2)) = TreePath (BinopExpr And condA condB) (Just (Seq tStmts stmt)) option1 option2 --Combine branches to one big branch
-    pruneInvalidBranch (TreePath condA (Just tStmts) InvalidPath (TreePath condB Nothing option1 option2)) = TreePath (BinopExpr And condA condB) (Just tStmts) option1 option2 --Combine branches to one big branch
-    pruneInvalidBranch (TreePath condA Nothing InvalidPath (TreePath condB stmts option1 option2)) = TreePath (BinopExpr And condA condB) stmts option1 option2 --Combine branches to one big branch
-    pruneInvalidBranch (TreePath condA tStmts treepath@TreePath {} InvalidPath) = pruneInvalidBranch (TreePath condA tStmts InvalidPath treepath) --Swap arguments and run previous case
+    -- pruneInvalidBranch (TreePath condA (Just tStmts) InvalidPath (LinearPath condB stmt)) = LinearPath (BinopExpr And condA condB) (Seq tStmts stmt) --Linearise a branch if only one of the paths is feasible
+    -- pruneInvalidBranch (TreePath condA Nothing InvalidPath (LinearPath condB stmt)) = LinearPath (BinopExpr And condA condB) stmt --Linearise a branch if only one of the paths is feasible
+    -- pruneInvalidBranch (TreePath condA tStmts linpath@LinearPath {} InvalidPath) = pruneInvalidBranch (TreePath condA tStmts InvalidPath linpath) --Swap arguments and run previous case
+    -- --
+    -- pruneInvalidBranch (TreePath condA (Just tStmts) InvalidPath (TreePath condB (Just stmt) option1 option2)) = TreePath (BinopExpr And condA condB) (Just (Seq tStmts stmt)) option1 option2 --Combine branches to one big branch
+    -- pruneInvalidBranch (TreePath condA (Just tStmts) InvalidPath (TreePath condB Nothing option1 option2)) = TreePath (BinopExpr And condA condB) (Just tStmts) option1 option2 --Combine branches to one big branch
+    -- pruneInvalidBranch (TreePath condA Nothing InvalidPath (TreePath condB stmts option1 option2)) = TreePath (BinopExpr And condA condB) stmts option1 option2 --Combine branches to one big branch
+    -- pruneInvalidBranch (TreePath condA tStmts treepath@TreePath {} InvalidPath) = pruneInvalidBranch (TreePath condA tStmts InvalidPath treepath) --Swap arguments and run previous case
     --
     pruneInvalidBranch tree = tree
 _removePaths linpath@LinearPath {} depth
@@ -177,7 +195,9 @@ mapTree condFunc stmtFunc (TreePath cond stmt option1 option2) = TreePath (condF
 
 countBranches :: Num p => ProgramPath a -> p
 countBranches (TreePath _ _ option1 option2) = countBranches option1 + countBranches option2
-countBranches _ = 1
+countBranches InvalidPath = 0
+countBranches (EmptyPath _) = 0
+countBranches LinearPath {} = 1
 
 --Returns the number of invalid nodes for a path of FIXED LENGTH
 numInvalid :: Num p => ProgramPath a -> p
@@ -187,10 +207,12 @@ numInvalid _ = 0
 
 --Returns the number of nodes with a condition of false for a path of FIXED LENGTH
 numConditionFalse :: Num p => ProgramPath Expr -> p
-numConditionFalse = foldTreeCond conditionCheck 0 id
-  where
-    conditionCheck (LitB False) prev = 1 + prev
-    conditionCheck _ prev = prev
+numConditionFalse t@(TreePath cond _ option1 option2)
+  | cond == LitB False = countBranches t
+  | otherwise = numConditionFalse option1 + numConditionFalse option2
+numConditionFalse InvalidPath = 0
+numConditionFalse (EmptyPath _) = 0
+numConditionFalse (LinearPath cond _) = if cond == LitB False then 1 else 0
 
 -- Note that this function assumes that all ifs and whiles have been removed from the path
 countStatements :: Num p => Stmt -> p
@@ -282,7 +304,7 @@ evaluateFullTree linpath@(LinearPath cond stmts)
     let condExpr = considerExpr cond
     [(\vars -> simplifyExpr (BinopExpr Implication (condExpr vars) (path vars)), linpath)]
 evaluateFullTree (EmptyPath cond) = [(const cond, EmptyPath cond)]
-evaluateFullTree InvalidPath = [(const (LitB False), InvalidPath)]
+evaluateFullTree InvalidPath = [] --Ignore invalid path
 
 evaluateTreeConds :: ProgramPath Expr -> Map String Expr -> Map String (Z3 AST) -> IO (ProgramPath Expr)
 evaluateTreeConds (TreePath cond stmts option1 option2) vars varmap = do

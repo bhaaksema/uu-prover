@@ -37,7 +37,8 @@ considerExpr expr = considerExpr' (simplifyExpr expr)
 considerExpr' :: Expr -> Map String Expr -> Expr
 considerExpr' i@(LitI _) _ = i
 considerExpr' b@(LitB _) _ = b
-considerExpr' (BinopExpr binop expr1 expr2) vars = BinopExpr binop (considerExpr expr1 vars) (considerExpr expr2 vars)
+considerExpr' (BinopExpr Plus (Parens e) (LitI i)) vars = considerExpr' (Parens (BinopExpr Plus e (LitI i))) vars
+considerExpr' (BinopExpr binop expr1 expr2) vars = evalBinopExpr $ BinopExpr binop (considerExpr expr1 vars) (considerExpr expr2 vars)
 considerExpr' (OpNeg expr) vars = OpNeg (considerExpr expr vars)
 considerExpr' (Var name) vars = vars ! name
 considerExpr' (ArrayElem (Var name) index) vars = ArrayElem (vars ! name) (considerExpr index vars)
@@ -141,6 +142,12 @@ evalExpr' (Exists locvarName expr) vars = do
   let boundedVars = insert locvarName quantifier vars
   mkExistsConst [] [quantifier'] =<< evalExpr' expr boundedVars
 evalExpr' e _ = error ("Unknown z3 expression '" ++ show e ++ "'")
+
+evalBinopExpr :: Expr -> Expr
+evalBinopExpr (BinopExpr Plus (LitI i1) (LitI i2)) = LitI (i1 + i2)
+evalBinopExpr (BinopExpr Minus (LitI i1) (LitI i2)) = LitI (i1 - i2)
+evalBinopExpr (BinopExpr Multiply (LitI i1) (LitI i2)) = LitI (i1 * i2)
+evalBinopExpr e = e
 
 -- Calculates how many atoms the given expression has
 numExprAtoms :: Expr -> Int

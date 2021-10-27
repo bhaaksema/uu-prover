@@ -64,6 +64,7 @@ evaluateProgram (Right program) (k, file, printWlp, printPath) = do
   let flaggedPath = flagInvalid path k
   let pathsTooLong = numInvalid flaggedPath
   let clearedPath = removePaths path k
+  --putStrLn $ printTree clearedPath k
 
   -- Create a map with all the variables and an initial value of (Var name)
   let (vars, varTypes) = foldl addExprVariable (empty, empty) (input program ++ output program ++ locVars)
@@ -107,8 +108,9 @@ evaluateProgram (Right program) (k, file, printWlp, printPath) = do
   -- END DEBUG STATEMENTS
 
   -- Statistics
-  putStrLn ("inspected paths: " ++ show (countBranches flaggedPath))
-  putStrLn ("unfeasible paths: " ++ show pathsTooLong ++ " (exceeded length)")
+  putStrLn ("inspected paths: " ++ show (countBranches condPath))
+  putStrLn ("False paths: " ++ show (numConditionFalse condPath))
+  --putStrLn ("unfeasible paths: " ++ show pathsTooLong ++ " (exceeded length)")
   putStrLn ("formula size (atoms): " ++ show (sum (map numExprAtoms wlps)) ++ " from " ++ show (length wlps) ++ " wlps")
 
   -- Print the result of the verification
