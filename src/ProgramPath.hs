@@ -97,38 +97,31 @@ combineStatements s1 s2 = Seq s1 s2
 --
 
 --Wrapper for actual function, so it wont keep evaluating the infinite structure
-removePaths :: ProgramPath Expr -> Int -> ProgramPath Expr
+removePaths :: ProgramPath Expr -> Int -> (ProgramPath Expr, Int)
 removePaths tree depth
-  | depth <= 0 = InvalidPath
+  | depth <= 0 = (InvalidPath, 0)
   | otherwise = _removePaths tree depth
 
-_removePaths :: ProgramPath Expr -> Int -> ProgramPath Expr
-_removePaths (TreePath _ _ InvalidPath InvalidPath) depth = InvalidPath --Prune a branch if both branches are invalid
+_removePaths :: ProgramPath Expr -> Int -> (ProgramPath Expr, Int)
+_removePaths (TreePath _ _ InvalidPath InvalidPath) depth = (InvalidPath, 0) --Prune a branch if both branches are invalid
 _removePaths (TreePath cond tStmts pathA pathB) depth
-  | remDepth < 0 = InvalidPath --In this case all preceding statements are longer than what happens after branching, so K is exceeded anyway
+  | remDepth < 0 = (InvalidPath, 0) --In this case all preceding statements are longer than what happens after branching, so K is exceeded anyway
   | otherwise = pruneInvalidBranch (TreePath cond tStmts newA newB) --Evaluate both paths. If both turn out to be unfeasible this node is pruned as well
   where
     baseDepth = splitDepth tStmts depth --How many statements happen before the branch
     remDepth = depth - baseDepth --The depth remaining after the preceding statements
-    newA = removePaths pathA remDepth --Evaluate path A, see if it is feasible given the depth
-    newB = removePaths pathB remDepth --Evaluate path B, see if it is feasible given the depth
-    pruneInvalidBranch (TreePath cond _ InvalidPath InvalidPath) = InvalidPath --Invalidate path if both branches are unfeasible
+    (newA, newACount) = removePaths pathA remDepth --Evaluate path A, see if it is feasible given the depth
+    (newB, newBCount) = removePaths pathB remDepth --Evaluate path B, see if it is feasible given the depth
+    pruneInvalidBranch (TreePath cond _ InvalidPath InvalidPath) = (InvalidPath, 0) --Invalidate path if both branches are unfeasible
     --
-    -- pruneInvalidBranch (TreePath condA (Just tStmts) InvalidPath (LinearPath condB stmt)) = LinearPath (BinopExpr And condA condB) (Seq tStmts stmt) --Linearise a branch if only one of the paths is feasible
-    -- pruneInvalidBranch (TreePath condA Nothing InvalidPath (LinearPath condB stmt)) = LinearPath (BinopExpr And condA condB) stmt --Linearise a branch if only one of the paths is feasible
-    -- pruneInvalidBranch (TreePath condA tStmts linpath@LinearPath {} InvalidPath) = pruneInvalidBranch (TreePath condA tStmts InvalidPath linpath) --Swap arguments and run previous case
-    -- --
-    -- pruneInvalidBranch (TreePath condA (Just tStmts) InvalidPath (TreePath condB (Just stmt) option1 option2)) = TreePath (BinopExpr And condA condB) (Just (Seq tStmts stmt)) option1 option2 --Combine branches to one big branch
-    -- pruneInvalidBranch (TreePath condA (Just tStmts) InvalidPath (TreePath condB Nothing option1 option2)) = TreePath (BinopExpr And condA condB) (Just tStmts) option1 option2 --Combine branches to one big branch
-    -- pruneInvalidBranch (TreePath condA Nothing InvalidPath (TreePath condB stmts option1 option2)) = TreePath (BinopExpr And condA condB) stmts option1 option2 --Combine branches to one big branch
-    -- pruneInvalidBranch (TreePath condA tStmts treepath@TreePath {} InvalidPath) = pruneInvalidBranch (TreePath condA tStmts InvalidPath treepath) --Swap arguments and run previous case
-    --
-    pruneInvalidBranch tree = tree
+    pruneInvalidBranch tree@(TreePath _ _ _ InvalidPath) = (tree, newACount)
+    pruneInvalidBranch tree@(TreePath _ _ InvalidPath _) = (tree, newBCount)
+    pruneInvalidBranch tree = (tree, newACount + newBCount)
 _removePaths linpath@LinearPath {} depth
-  | depth < totalDepth linpath depth = InvalidPath --Make path unfeasible if it exceeds the depth
-  | otherwise = linpath
-_removePaths InvalidPath _ = InvalidPath
-_removePaths (EmptyPath _) _ = InvalidPath --Invalidate empty paths
+  | depth < totalDepth linpath depth = (InvalidPath, 0) --Make path unfeasible if it exceeds the depth
+  | otherwise = (linpath, 1)
+_removePaths InvalidPath _ = (InvalidPath, 0)
+_removePaths (EmptyPath _) _ = (InvalidPath, 0) --Invalidate empty paths
 
 --Wrapper for actual function, so it wont keep evaluating the infinite structure
 flagInvalid :: ProgramPath Expr -> Int -> ProgramPath Expr
