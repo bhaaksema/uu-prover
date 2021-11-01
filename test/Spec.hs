@@ -1,6 +1,6 @@
 module Main where
 
-import Evaluator (run)
+import Verifier (run)
 import System.Directory (listDirectory)
 
 main :: IO ()

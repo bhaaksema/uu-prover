@@ -18,6 +18,7 @@ library
   exposed-modules:
       Evaluator
       ProgramPath
+      Verifier
       WLP
   other-modules:
       Paths_uu_program_verification
