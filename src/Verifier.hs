@@ -64,7 +64,7 @@ verifyProgram (Right program) (k, file, printWlp, printPath) = do
   let locVars = findLocvars (stmt program)
   let flaggedPath = flagInvalid path k
   let pathsTooLong = numInvalid flaggedPath
-  let clearedPath = removePaths path k
+  let (clearedPath, branches) = removePaths path k
 
   -- Create a map with all the variables and an initial value of (Var name)
   let (vars, varTypes) = foldl addExprVariable (empty, empty) (input program ++ output program ++ locVars)
@@ -86,8 +86,9 @@ verifyProgram (Right program) (k, file, printWlp, printPath) = do
   when printWlp $ print wlps
 
   -- Statistics
-  putStrLn ("inspected paths: " ++ show (countBranches flaggedPath))
-  putStrLn ("unfeasible paths: " ++ show pathsTooLong ++ " (exceeded length)")
+  putStrLn ("inspected paths: " ++ show (countBranches condPath))
+  putStrLn ("inspected paths: " ++ show branches)
+  putStrLn ("Infeasible paths: " ++ show (branches - length wlps))
   putStrLn ("formula size (atoms): " ++ show (sum (map numExprAtoms wlps)) ++ " from " ++ show (length wlps) ++ " wlps")
 
   -- Print the result of the verification

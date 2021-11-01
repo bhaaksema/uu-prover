@@ -31,7 +31,7 @@ evaluateFullTree linpath@(LinearPath cond stmts)
     let condExpr = considerExpr cond
     [(\vars -> simplifyExpr (BinopExpr Implication (condExpr vars) (path vars)), linpath)]
 evaluateFullTree (EmptyPath cond) = [(const cond, EmptyPath cond)]
-evaluateFullTree InvalidPath = [(const (LitB False), InvalidPath)]
+evaluateFullTree InvalidPath = [] --Ignore invalid path
 
 evaluateTreeConds :: ProgramPath Expr -> Map String Expr -> Map String (Z3 AST) -> IO (ProgramPath Expr)
 evaluateTreeConds (TreePath cond stmts option1 option2) vars varmap = do
@@ -112,9 +112,10 @@ z3Script = evalExpr
 
 z3Satisfiable :: Expr -> Map String (Z3 AST) -> IO Expr
 z3Satisfiable expr varmap = do
-  evalZ3 script >>= \case
-    Sat -> return expr
-    _ -> return (LitB False)
+  evalZ3 script >>= \result ->
+    case result of
+      Sat -> return expr
+      _ -> return (LitB False)
   where
     script = do
       reset
