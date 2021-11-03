@@ -8,6 +8,7 @@ wlp :: Stmt -> (Map String Expr -> Expr) -> Map String Expr -> Expr
 wlp (Assert expr) q vars = BinopExpr And (considerExpr expr vars) (q vars)
 wlp (Assume expr) q vars = BinopExpr Implication (Parens (considerExpr expr vars)) (Parens (q vars))
 wlp Skip q vars = q vars
+wlp (Seq (Assert invar) (While _ _)) q vars = considerExpr invar vars -- This situation is artificial: we create it like such when there is an invariant in front of the loop. Otherwise, while should never be in any statement
 wlp (Seq stmt1 stmt2) q vars = do
   let stmt2Q = wlp stmt2 q
   let stmt1Q = wlp stmt1 stmt2Q

@@ -41,6 +41,10 @@ _constructPath ((While expr stmt) : stmts) = tree
     stmtTree = _constructPath $ listify stmt -- Construct a path of the inner statement. This is required because there may be nested special environments.
     skipWhile = injectExpression (OpNeg expr) (_constructPath stmts)
     runs = combinePaths stmtTree (TreePath expr Nothing skipWhile runs) -- Construct paths for when the while runs
+_constructPath (Assert invar : w@(While expr stmt) : stmts) = tree -- A loop with an invariant was found
+  where
+    assertPath = _constructPath [Seq (Assert invar) w]
+    tree = combinePaths assertPath (_constructPath stmts)
 _constructPath ((Block vars stmt) : stmts) = error $ "Found unfiltered block! \r\n" ++ show stmt -- Block should be filtered out during splitList
 _constructPath (stmt : stmts) = combinePaths (LinearPath (LitB True) stmt) $ _constructPath stmts
 _constructPath [] = EmptyPath (LitB True)
@@ -65,6 +69,7 @@ splitList' :: [Stmt] -> [Stmt] -> [Stmt]
 splitList' [] [] = []
 splitList' [] stmts = rollSeqr stmts
 splitList' (w@While {} : statements) stmts = rollSeqr stmts ++ (w : splitList statements)
+splitList' (Assert e : w@While {} : statements) stmts = rollSeqr stmts ++ [Assert e] ++ (w : splitList statements) -- Loop invariant found
 splitList' (w@IfThenElse {} : statements) stmts = rollSeqr stmts ++ (w : splitList statements)
 splitList' ((Block _ stmt) : statements) stmts = splitList' (listify stmt ++ statements) stmts -- Take code out of the block, and process as its own entity
 splitList' (s : statements) stmts = splitList' statements (s : stmts)
@@ -89,17 +94,13 @@ injectExpression _ InvalidPath = InvalidPath
 
 -- Utility function that can combine two ProgramPaths into a single ProgramPath
 combinePaths :: ProgramPath Expr -> ProgramPath Expr -> ProgramPath Expr
-combinePaths (LinearPath condA stmtA) (LinearPath condB stmtB) = LinearPath (simplifyExpr (BinopExpr And condA condB)) (combineStatements stmtA stmtB)
-combinePaths (LinearPath condA lin) (TreePath condB tStmts option1 option2) = TreePath (simplifyExpr (BinopExpr And condA condB)) newStmts option1 option2 where newStmts = maybe (Just lin) (Just . combineStatements lin) tStmts
+combinePaths (LinearPath condA stmtA) (LinearPath condB stmtB) = LinearPath (simplifyExpr (BinopExpr And condA condB)) (Seq stmtA stmtB)
+combinePaths (LinearPath condA lin) (TreePath condB tStmts option1 option2) = TreePath (simplifyExpr (BinopExpr And condA condB)) newStmts option1 option2 where newStmts = maybe (Just lin) (Just . Seq lin) tStmts
 combinePaths (TreePath cond tStmts option1 option2) linpath@LinearPath {} = TreePath cond tStmts (combinePaths option1 linpath) (combinePaths option2 linpath)
 combinePaths (TreePath cond tStmts option1 option2) treepath@TreePath {} = TreePath cond tStmts (combinePaths option1 treepath) (combinePaths option2 treepath)
 combinePaths (EmptyPath cond) otherPath = injectExpression cond otherPath
 combinePaths otherPath empty@(EmptyPath cond) = combinePaths empty otherPath
 combinePaths _ _ = InvalidPath
-
-combineStatements :: Stmt -> Stmt -> Stmt
-combineStatements (Seq a b) c = Seq a (combineStatements b c)
-combineStatements s1 s2 = Seq s1 s2
 
 --
 -- SECTION 2
