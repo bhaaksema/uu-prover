@@ -1,9 +1,10 @@
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module Evaluator where
 
-import Data.Map (Map, filter, insert, intersection, toList)
-import Data.Maybe (catMaybes)
+import Data.Map (Map, filter, fromList, insert, intersection, keys, toList, (!))
+import Data.Maybe (catMaybes, fromMaybe)
 import GCLParser.GCLDatatype
 import ProgramPath (ProgramPath (..), combinePaths)
 import WLP (considerExpr, evalExpr, simplifyExpr, traceVarExpr, wlp)
@@ -63,20 +64,40 @@ calcWLP tree vars = do
 -- Outputs if an expression can be contradicted. If so, also outputs how
 verifyExpr :: Expr -> (Map String (Z3 AST), Map String Type) -> IO Result
 verifyExpr expr (z3vars, types) =
-  evalZ3 script >>= \(result, sol) ->
+  evalZ3 script >>= \(result, intMaybe, boolMaybe, arrayMaybe) ->
     case result of
       Sat -> do
+        let intValueMap = fromList $ zip (keys intNames) (fromMaybe [] intMaybe) -- Map of (name, Integer), allows us to get array lengths (using #name)
+        let arrays = map (fromMaybe []) arrayMaybe -- Map the fromMaybe function over all the arrays. Should be safe as it is only nothing when there is no counter example
+        let arraysWithNames = zip (map fst (toList arrayNames)) arrays -- Make a list of tuples, so that the name of each array is available (i.e. [(arrayname, array)])
+        let arrayValues = map (\(name, array) -> getFirstN (intValueMap ! ("#" ++ name)) array) arraysWithNames -- Get the first #name elements of the infinite z3 array.
         putStrLn "counterexample found: "
-          >> putStrLn "ints, bools, arrays"
-          >> putStrLn (show (map fst (toList intNames)) ++ show (map fst (toList boolNames)) ++ show (map fst (toList arrayNames)))
-          >> putStrLn sol
+          >> putStrLn "ints"
+          >> print (map fst (toList intNames))
+          >> putStrLn (unMaybe intMaybe)
+          >> putStrLn []
+          >> putStrLn "bools"
+          >> print (map fst (toList boolNames))
+          >> putStrLn (unMaybe boolMaybe)
+          >> putStrLn []
+          >> putStrLn "arrays"
+          >> print (map fst (toList arrayNames))
+          >> print arrayValues
           >> putStrLn []
         return result
       _ -> return result
   where
-    intNames = Data.Map.filter onlyInts types
-    boolNames = Data.Map.filter onlyBools types
+    -- Dictonaries of variable, type with only the given type
+    intNames = Data.Map.filter (onlyPrimitive PTInt) types
+    boolNames = Data.Map.filter (onlyPrimitive PTBool) types
     arrayNames = Data.Map.filter onlyArrays types
+
+    -- Gets the first n elements from an array of integers
+    getFirstN 0 _ = []
+    getFirstN _ [] = []
+    getFirstN n (x : xs :: [Integer]) = x : getFirstN (n - 1) xs
+
+    -- Script to run to get a counter example
     script = do
       reset
       push
@@ -85,26 +106,39 @@ verifyExpr expr (z3vars, types) =
       (_, intMaybe) <- withModel $ \m ->
         catMaybes <$> mapM (evalInt m) newVars
 
-      newVars <- mapM snd (toList z3Arrays)
-      (_, arrayMaybe) <- withModel $ \m ->
-        map interpMap <$> (catMaybes <$> mapM (evalArray m) newVars)
+      let arrayNames = map fst (toList z3Arrays)
+      arrayElements <- mapM (\name -> sequence (createArrayGetter name 0)) arrayNames
+      arrayMaybe' <- mapM (\a -> withModel $ \m -> catMaybes <$> mapM (evalInt m) a) arrayElements
+      let arrayMaybe = map snd arrayMaybe'
 
       newVars <- mapM snd (toList z3Bools)
       (result, boolMaybe) <- withModel $ \m ->
         catMaybes <$> mapM (evalBool m) newVars
-      let display = unMaybe intMaybe ++ unMaybe boolMaybe ++ unMaybe arrayMaybe
-      return (result, display)
+      return (result, intMaybe, boolMaybe, arrayMaybe)
 
+    -- Dicts of z3 variables that have only a specific type
     z3Ints = intersection z3vars intNames
     z3Bools = intersection z3vars boolNames
     z3Arrays = intersection z3vars arrayNames
-    onlyInts (PType PTInt) = True
-    onlyInts _ = False
-    onlyBools (PType PTBool) = True
-    onlyBools _ = False
+
+    -- Filters to get variables of a specific type. Necessary because we need different eval functions for bools, arrays and ints.
+    onlyPrimitive expectedType (PType ptype) = ptype == expectedType
+    onlyPrimitive _ _ = False
     onlyArrays (AType _) = True
     onlyArrays _ = False
-    unMaybe m = maybe "" show m
+
+    unMaybe m = maybe "" show m -- Turn the maybe into a string
+
+    -- Create an array of integer variables, so that all values can be extracted from array
+    createArrayGetter arrayName 999 = []
+    createArrayGetter arrayName i = do
+      getArrayElem arrayName i : createArrayGetter arrayName (i + 1)
+
+    -- Selects item with given index from the array with given name
+    getArrayElem arrayName index = do
+      array <- z3Arrays ! arrayName
+      i <- mkInteger $ index - 1
+      mkSelect array i
 
 -- Turns a given expression into an AST
 z3Script :: Expr -> Map String (Z3 AST) -> Z3 AST
