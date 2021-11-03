@@ -1,8 +1,8 @@
 module Main where
 
 import GCLParser.Parser (parseGCLfile)
-import Verifier (arguments, verifyProgram)
 import System.Directory (listDirectory)
+import Verifier (arguments, verifyProgram)
 
 run :: [Char] -> IO ()
 run file = do
