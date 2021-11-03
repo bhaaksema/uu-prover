@@ -1,7 +1,7 @@
 module Verifier where
 
 import Control.Monad (when)
-import Data.Map (empty)
+import Data.Map (empty, insert)
 import Evaluator (addExprVariable, calcWLP, evaluateTreeConds, verifyExpr)
 import GCLParser.GCLDatatype
 import GCLParser.Parser (parseGCLfile)
@@ -52,6 +52,13 @@ mapUntilSat f (x : xs) = do
         Sat -> return (Sat, otherPath, otherWlp)
         _ -> return (Undef, path, wlp)
 
+exceptionCodeToString :: Int -> String
+exceptionCodeToString 0 = "0 (No exceptions)"
+exceptionCodeToString 1 = "1 (Division by 0 error)"
+exceptionCodeToString 2 = "2 (Tried to read from invalid array index)"
+exceptionCodeToString 3 = "3 (Invalid invariant used)"
+exceptionCodeToString i = show i ++ " (Unknown exception)"
+
 verifyProgram :: Either a Program -> (Int, [Char], Bool, Bool) -> IO ()
 verifyProgram (Left _) _ = putStrLn "unable to parse program"
 verifyProgram (Right program) (k, file, printWlp, printPath) = do
@@ -67,7 +74,10 @@ verifyProgram (Right program) (k, file, printWlp, printPath) = do
   let (clearedPath, branches) = removePaths path k
 
   -- Create a map with all the variables and an initial value of (Var name)
-  let (vars, varTypes) = foldl addExprVariable (empty, empty) (input program ++ output program ++ locVars)
+  let (vars', varTypes') = foldl addExprVariable (empty, empty) (input program ++ output program ++ locVars)
+  -- Add entries for the exception code variable
+  let vars = insert "exc" (LitI 0) vars'
+  let varTypes = insert "exc" (PType PTInt) varTypes'
   let varmap = convertVarMap varTypes
   condPath <- evaluateTreeConds clearedPath vars varmap
   let cantBranch = numConditionFalse condPath
@@ -99,6 +109,7 @@ verifyProgram (Right program) (k, file, printWlp, printPath) = do
     Undef -> putStrLn "undef (at least one path returned undef, but could not find any counteraxamples)"
     Sat -> do
       putStrLn ("reject (counterexample in path: " ++ show finalPath ++ ")")
+  --putStrLn $ "Exception code: " ++ exceptionCodeToString (litToInt )
 
   -- Stop computation time counter
   end <- getCPUTime

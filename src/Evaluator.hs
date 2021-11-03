@@ -140,6 +140,7 @@ verifyExpr expr (z3vars, types) =
       i <- mkInteger $ index - 1
       mkSelect array i
 
+-- Checks an expression using a Z3 variable map. If it is not satisfiable will return the LitB expression, else the original expression.
 z3Satisfiable :: Expr -> Map String (Z3 AST) -> IO Expr
 z3Satisfiable expr varmap = do
   evalZ3 script >>= \result ->
@@ -152,16 +153,6 @@ z3Satisfiable expr varmap = do
       push
       assert =<< evalExpr expr varmap
       check
-
--- Returns the names of variables that are not set to a primitive value
-mutatedVariables :: Map String Expr -> [String]
-mutatedVariables vars = z3Environment
-  where
-    convert (key, Var name)
-      | key == name = [name]
-      | otherwise = []
-    convert (key, expr) = []
-    z3Environment = concatMap convert (toList vars)
 
 addExprVariable :: (Map String Expr, Map String Type) -> VarDeclaration -> (Map String Expr, Map String Type)
 addExprVariable (map, ts) (VarDeclaration name t@(PType _)) = (insert name (Var name) map, insert name t ts)
