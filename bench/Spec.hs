@@ -9,15 +9,15 @@ import Verifier (verifyProgram)
 modProgram :: Either a Program -> Int -> Either a Program
 modProgram (Left error) n = Left error
 modProgram (Right (Program name input output stmt)) n = do
-  let inp = VarDeclaration "" (PType PTInt)
+  let inp = VarDeclaration "N" (PType PTInt)
   let seq = Seq (Assign "N" (LitI n)) stmt
   Right (Program name (inp : input) output seq)
 
 run :: [Char] -> Int -> IO ()
 run file n = do
   program <- parseGCLfile file
-  -- TODO: use deep enough K (is now always 1)
-  verifyProgram (modProgram program n) (1, file, False, False)
+  -- TODO: use deep enough K (is now always 10)
+  verifyProgram (modProgram program n) (10, file, False, False)
 
 main :: IO ()
 main = do
