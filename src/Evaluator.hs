@@ -140,10 +140,6 @@ verifyExpr expr (z3vars, types) =
       i <- mkInteger $ index - 1
       mkSelect array i
 
--- Turns a given expression into an AST
-z3Script :: Expr -> Map String (Z3 AST) -> Z3 AST
-z3Script = evalExpr
-
 z3Satisfiable :: Expr -> Map String (Z3 AST) -> IO Expr
 z3Satisfiable expr varmap = do
   evalZ3 script >>= \result ->

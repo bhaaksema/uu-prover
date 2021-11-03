@@ -2,7 +2,7 @@ module Verifier where
 
 import Control.Monad (when)
 import Data.Map (empty)
-import Evaluator (addExprVariable, calcWLP, evaluateTreeConds, verifyExpr, z3Script)
+import Evaluator (addExprVariable, calcWLP, evaluateTreeConds, verifyExpr)
 import GCLParser.GCLDatatype
 import GCLParser.Parser (parseGCLfile)
 import ProgramPath
@@ -99,9 +99,6 @@ verifyProgram (Right program) (k, file, printWlp, printPath) = do
     Undef -> putStrLn "undef (at least one path returned undef, but could not find any counteraxamples)"
     Sat -> do
       putStrLn ("reject (counterexample in path: " ++ show finalPath ++ ")")
-      putStrLn "corresponding z3 script is:"
-      script <- evalZ3 $ astToString =<< z3Script (OpNeg finalWlp) varmap
-      putStrLn script
 
   -- Stop computation time counter
   end <- getCPUTime
