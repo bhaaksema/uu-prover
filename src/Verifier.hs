@@ -55,7 +55,7 @@ mapUntilSat f (x : xs) = do
 verifyProgram :: Either a Program -> (Int, [Char], Bool, Bool) -> IO ()
 verifyProgram (Left _) _ = putStrLn "unable to parse program"
 verifyProgram (Right program) (k, file, printWlp, printPath) = do
-  putStrLn ("verifying " ++ file ++ " for k = " ++ show k)
+  putStrLn ("verifying " ++ file ++ " for K = " ++ show k)
   putStrLn []
 
   -- Start computation time counter

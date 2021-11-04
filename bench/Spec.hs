@@ -17,10 +17,11 @@ run :: [Char] -> Int -> IO ()
 run file n = do
   program <- parseGCLfile file
   -- TODO: use deep enough K (is now always 10)
-  verifyProgram (modProgram program n) (10, file, False, False)
+  let k = 10
+  verifyProgram (modProgram program n) (k + 1, file, False, False)
 
 main :: IO ()
 main = do
   let dir = "bench/input/"
   files <- listDirectory dir
-  defaultMain [bench file $ nfIO (run (dir ++ file) n) | file <- files, n <- [2 .. 10]]
+  defaultMain [bench (file ++ " for N = " ++ show n) $ nfIO (run (dir ++ file) n) | file <- files, n <- [2 .. 10]]
