@@ -15,7 +15,7 @@ import Z3.Monad (Result (..), astToString, evalZ3)
 -- The following functions will run the 'main' program and output the required information
 -- main loads the file and puts the ParseResult Program through the following functions
 arguments :: [[Char]] -> (Int, [Char], Bool, Bool)
-arguments [] = (10, "input/test/reverse.gcl", False, False)
+arguments [] = (10, "test/input/reverse.gcl", False, False)
 arguments ("-K" : arg : xs) = (read arg, a2, a3, a4)
   where
     (_, a2, a3, a4) = arguments xs

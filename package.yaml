@@ -32,7 +32,6 @@ tests:
     - -with-rtsopts=-N
     dependencies:
     - uu-program-verification
-    - criterion >= 1.5.10.0
     - directory >= 1.3.6.0
 
 benchmarks:

@@ -1,10 +1,17 @@
 module Main where
 
-import Verifier (run)
+import GCLParser.Parser (parseGCLfile)
 import System.Directory (listDirectory)
+import Verifier (arguments, verifyProgram)
+
+run :: [Char] -> IO ()
+run file = do
+  let parsedArgs = (10, file, False, False)
+  program <- parseGCLfile file
+  verifyProgram program parsedArgs
 
 main :: IO ()
 main = do
-  let dir = "input/test/"
+  let dir = "test/input/"
   files <- listDirectory dir
-  print [run (dir ++ file) | file <- files]
+  foldr (>>) (print "") [run (dir ++ file) | file <- files]
