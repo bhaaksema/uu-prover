@@ -88,17 +88,20 @@ verifyProgram (Right program) (k, file, printWlp, printPath) = do
   -- Statistics
   putStrLn ("inspected paths: " ++ show (countBranches condPath))
   putStrLn ("inspected paths: " ++ show branches)
-  putStrLn ("Infeasible paths: " ++ show (branches - length wlps))
+  putStrLn ("infeasible paths: " ++ show (branches - length wlps))
   putStrLn ("formula size (atoms): " ++ show (sum (map numExprAtoms wlps)) ++ " from " ++ show (length wlps) ++ " wlps")
 
   -- Print the result of the verification
   putStrLn []
-  (final, finalPath, finalWlp) <- mapUntilSat (\(wlp, path) -> (verifyExpr (OpNeg wlp) (varmap, varTypes), path, wlp)) wlpsInfo
-  case final of
-    Unsat -> putStrLn "accept (could not find any counterexamples)"
-    Undef -> putStrLn "undef (at least one path returned undef, but could not find any counteraxamples)"
-    Sat -> do
-      putStrLn ("reject (counterexample in path: " ++ show finalPath ++ ")")
+  if branches == 0
+    then putStrLn "reject (set of inspected paths is empty)"
+    else do
+      (final, finalPath, finalWlp) <- mapUntilSat (\(wlp, path) -> (verifyExpr (OpNeg wlp) (varmap, varTypes), path, wlp)) wlpsInfo
+      case final of
+        Unsat -> putStrLn "accept (could not find any counterexamples)"
+        Undef -> putStrLn "undef (at least one path returned undef, but could not find any counteraxamples)"
+        Sat -> do
+          putStrLn ("reject (counterexample in path: " ++ show finalPath ++ ")")
 
   -- Stop computation time counter
   end <- getCPUTime

@@ -7,7 +7,7 @@ import System.Directory (listDirectory)
 import Verifier (verifyProgram)
 
 modProgram :: Either a Program -> Int -> Either a Program
-modProgram (Left error) n = Left error
+modProgram (Left e) n = Left e
 modProgram (Right (Program name input output stmt)) n = do
   let inp = VarDeclaration "N" (PType PTInt)
   let seq = Seq (Assign "N" (LitI n)) stmt
