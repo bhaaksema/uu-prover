@@ -43,11 +43,29 @@ _constructPath ((While expr stmt) : stmts) = tree
     runs = combinePaths stmtTree (TreePath expr Nothing skipWhile runs) -- Construct paths for when the while runs
 _constructPath (Assert invar : w@(While expr stmt) : stmts) = tree -- A loop with an invariant was found
   where
-    assertPath = _constructPath [Seq (Assert invar) w]
-    tree = combinePaths assertPath (_constructPath stmts)
+    -- When invariant is used, add a path that has the artificial invariant structure (Seq Assert While) and append the error checking paths after it
+    useInvariantPath = combinePaths (_constructPath [Seq (Assert invar) w]) (errorCheckingPath (_constructPath stmts))
+    tree = if hasInnerWhile then _constructPath (w : stmts) else useInvariantPath
+    -- Check if the while has inner while. If it has another loop, we will not use the invariant, as the inner while may not be annoted.
+    hasInnerWhile = hasInnerWhile' $ listify stmt -- Create statement list
+    -- Check if statement list has while
+    hasInnerWhile' (While {} : xs) = True
+    hasInnerWhile' (x : xs) = hasInnerWhile' xs
+    hasInnerWhile' [] = False
 _constructPath ((Block vars stmt) : stmts) = error $ "Found unfiltered block! \r\n" ++ show stmt -- Block should be filtered out during splitList
 _constructPath (stmt : stmts) = combinePaths (LinearPath (LitB True) stmt) $ _constructPath stmts
 _constructPath [] = EmptyPath (LitB True)
+
+-- Construct paths that will be evaluated when exc is not 0.
+-- They can be used to find what kind of error was produced, as they explicitly set the corresponding exception code.
+-- Note that they add an Assert False, thus they don't further evaluate the noErrorPath and are a form of early stopping when there is an exception.
+errorCheckingPath :: ProgramPath Expr -> ProgramPath Expr
+errorCheckingPath noErrorPath = TreePath (LitB True) Nothing t1 (injectExpression testNoException noErrorPath)
+  where
+    assignPath x = LinearPath (BinopExpr Equal (Var "exc") (LitI x)) (Seq (Assign "exc" (LitI x)) (Assert (LitB False)))
+    testNoException = BinopExpr Equal (Var "exc") (LitI 0)
+    t1 = TreePath (LitB True) Nothing (assignPath 1) t2
+    t2 = TreePath (LitB True) Nothing (assignPath 2) (assignPath 3)
 
 -- Turns seq into a list of statements
 unrollSeq :: Stmt -> [Stmt]

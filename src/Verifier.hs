@@ -109,6 +109,7 @@ verifyProgram (Right program) (k, file, printWlp, printPath) = do
     Undef -> putStrLn "undef (at least one path returned undef, but could not find any counteraxamples)"
     Sat -> do
       putStrLn ("reject (counterexample in path: " ++ show finalPath ++ ")")
+      when printWlp $ putStrLn ("(counterexample in wlp: " ++ show finalWlp ++ ")")
   --putStrLn $ "Exception code: " ++ exceptionCodeToString (litToInt )
 
   -- Stop computation time counter
