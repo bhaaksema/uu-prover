@@ -1,6 +1,6 @@
 module WLP where
 
-import Data.Map (Map, adjust, empty, fromList, insert, toList, (!))
+import Data.Map (Map, adjust, empty, fromList, insert, member, toList, (!))
 import GCLParser.GCLDatatype
 import Z3.Monad
 
@@ -14,7 +14,15 @@ wlp (Seq stmt1 stmt2) q vars = do
   stmt1Q vars
 wlp (Assign name expr) q vars = do
   let value = considerExpr expr vars
-  q (insert name value vars)
+  let isArray = member ("#" ++ name) vars
+  let basicUpdate = insert name value vars -- Update the value of this variable to the expression
+  let qIfPrimitive = q basicUpdate --If this is a primitive, evaluate q using the basic map
+  let qIfArray = q (insert ("#" ++ name) (vars ! ("#" ++ getArrayName expr)) basicUpdate) --If this is an array, also update the array length of this variable. Then evaluate q using the new map.
+  if isArray then qIfArray else qIfPrimitive
+  where
+    getArrayName (Var name) = name -- Get name of the variable
+    getArrayName (RepBy expr _ _) = getArrayName expr -- Unwrap RepBy to get the name of the original array (we need it to find the length variable later on)
+    getArrayName expr = error "Trying to get array name from variable that is not an array: " ++ show expr
 wlp (AAssign name indexE expr) q vars = do
   let array = vars ! name
   let value = considerExpr expr vars
@@ -22,7 +30,7 @@ wlp (AAssign name indexE expr) q vars = do
   q (insert name (RepBy array index value) vars)
 wlp s _ _ = error ("Unknown statement '" ++ show s ++ "'")
 
---Returns a list of all variables declared in the program
+-- Returns a list of all variables declared in the program
 findLocvars :: Stmt -> [VarDeclaration]
 findLocvars (Seq stmt1 stmt2) = findLocvars stmt1 ++ findLocvars stmt2
 findLocvars (While _ stmt) = findLocvars stmt
@@ -42,6 +50,7 @@ considerExpr' (BinopExpr binop expr1 expr2) vars = evalBinopExpr $ BinopExpr bin
 considerExpr' (OpNeg expr) vars = OpNeg (considerExpr expr vars)
 considerExpr' (Var name) vars = vars ! name
 considerExpr' (ArrayElem (Var name) index) vars = ArrayElem (vars ! name) (considerExpr index vars)
+considerExpr' a@(ArrayElem _ _) vars = a
 considerExpr' (Parens e) vars = considerExpr e vars
 considerExpr' (SizeOf (Var name)) vars = vars ! ("#" ++ name)
 considerExpr' (Forall locvarName expr) vars = Forall locvarName (considerExpr expr boundedVars)
@@ -54,8 +63,8 @@ considerExpr' e _ = error ("Unknown expression '" ++ show e ++ "'")
 
 traceVarExpr :: Stmt -> Map String Expr -> Map String Expr
 traceVarExpr (Seq stmt1 stmt2) vars = do
-  let vars1 = traceVarExpr stmt1 vars --Variables after statement 1
-  let vars2 = traceVarExpr stmt2 vars1 --Variables after statement 2
+  let vars1 = traceVarExpr stmt1 vars -- Variables after statement 1
+  let vars2 = traceVarExpr stmt2 vars1 -- Variables after statement 2
   vars2
 traceVarExpr (Assign name expr) vars = do
   let value = considerExpr expr vars
@@ -156,7 +165,7 @@ numExprAtoms (Parens e) = numExprAtoms e
 numExprAtoms _ = 1
 
 simplifyExpr :: Expr -> Expr
---simplifyExpr e = e --Uncomment to disable expression simplification
+-- simplifyExpr e = e --Uncomment to disable expression simplification
 simplifyExpr (BinopExpr And (LitB False) _) = LitB False
 simplifyExpr (BinopExpr And _ (LitB False)) = LitB False
 simplifyExpr (BinopExpr And (LitB True) (LitB True)) = LitB True
