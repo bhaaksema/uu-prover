@@ -14,9 +14,13 @@ proctype Philosopher(byte i) {
          * being picked up. if the philosophers number is even it will first
          * pick up fork i, and fork NEXT(i) otherwise.
          */
-        if :: (i % 2 == 0) ; atomic { (fork[i]==FREE) ; fork[i] = i } ; fi
-        atomic { (fork[NEXT(i)]==FREE) ; fork[NEXT(i)] = i }
-        if :: (i % 2 != 0) ; atomic { (fork[i]==FREE) ; fork[i] = i } fi
+        if :: (i % 2 == 0) ;
+            atomic { (fork[i]==FREE) ; fork[i] = i }
+            atomic { (fork[NEXT(i)]==FREE) ; fork[NEXT(i)] = i }
+        :: else
+            atomic { (fork[NEXT(i)]==FREE) ; fork[NEXT(i)] = i }
+            atomic { (fork[i]==FREE) ; fork[i] = i }
+        fi
 
         /* prove that here we do indeed have the forks: */
         assert (fork[i]==i) && (fork[NEXT(i)]==i) ;
@@ -45,16 +49,7 @@ init {
 }
 
 // We translate being deadlock free to the statement:
-// When Phil(i) holds fork[i] or fork[NEXT(i)] they will eventualy hold both
+// Always eventually one of the philosophers will be eating.
 ltl third {
-    [](
-        (((fork[0] == 0) -> <>(fork[0] == 0 && fork[NEXT(0)] == 0)) ||
-        ((fork[NEXT(0)] == 0) -> <>(fork[0] == 0 && fork[NEXT(0)] == 0))) &&
-        (((fork[1] == 1) -> <>(fork[1] == 1 && fork[NEXT(1)] == 1)) ||
-        ((fork[NEXT(1)] == 1) -> <>(fork[1] == 1 && fork[NEXT(1)] == 1))) &&
-        (((fork[2] == 2) -> <>(fork[2] == 2 && fork[NEXT(2)] == 2)) ||
-        ((fork[NEXT(2)] == 2) -> <>(fork[2] == 2 && fork[NEXT(2)] == 2))) &&
-        (((fork[3] == 3) -> <>(fork[3] == 3 && fork[NEXT(3)] == 3)) ||
-        ((fork[NEXT(3)] == 3) -> <>(fork[3] == 3 && fork[NEXT(3)] == 3)))
-    )
+    []<>(eating[0] || eating[1] || eating[2] || eating[3])
 }

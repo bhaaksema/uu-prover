@@ -40,14 +40,14 @@ init {
 }
 
 // We translate being deadlock free to the statement:
-// When Phil(i) holds fork[i] they will eventualy also hold fork[NEXT(i)]
+// Always eventually Phil(i) will hold fork[i] and fork[NEXT(i)]
 ltl first {
-    [](
-        ((fork[0] == 0) -> <>(fork[0] == 0 && fork[NEXT(0)] == 0)) &&
-        ((fork[1] == 1) -> <>(fork[1] == 1 && fork[NEXT(1)] == 1)) &&
-        ((fork[2] == 2) -> <>(fork[2] == 2 && fork[NEXT(2)] == 2)) &&
-        ((fork[3] == 3) -> <>(fork[3] == 3 && fork[NEXT(3)] == 3))
-    )
+    [](<>(
+        fork[0] == 0 && fork[NEXT(0)] == 0 ||
+        fork[1] == 1 && fork[NEXT(1)] == 1 ||
+        fork[2] == 2 && fork[NEXT(2)] == 2 ||
+        fork[3] == 3 && fork[NEXT(3)] == 3
+    ))
 }
 
 // When Phil(1) and Phil(3) refrain from eating Phil(0) will eventually eat
