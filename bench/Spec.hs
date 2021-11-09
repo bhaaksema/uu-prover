@@ -16,11 +16,6 @@ modProgram (Right (Program name input output stmt)) n = do
   let seq = Seq (Assign "N" (LitI n)) stmt
   Right (Program name (inp : input) output seq)
 
-findk :: [Char] -> Int -> IO Int
-findk file n = do
-  program <- parseGCLfile file
-  return (head [k | k <- [1 ..], Unsat == unsafePerformIO (verifyProgram (modProgram program n) (k + 1, file, False, False))])
-
 run :: [Char] -> Int -> Int -> IO ()
 run file k n = do
   program <- parseGCLfile file
@@ -30,5 +25,14 @@ main :: IO ()
 main = do
   let dir = "bench/input/"
   files <- listDirectory dir
-  let k = 10
-  defaultMain [bench (f ++ " for N = " ++ show n) $ nfIO (run (dir ++ f) k n) | f <- files, n <- [2 .. 10]]
+  let fks = zip files [4, 10, 10]
+  defaultMain [bench (f ++ " for N = " ++ show n) $ nfIO (run (dir ++ f) k n) | (f, k) <- fks, n <- [2 .. 10]]
+
+-- findk :: [Char] -> Int -> Int
+-- findk file n = head [k | k <- [1 ..], Unsat == unsafePerformIO (verifyProgram (modProgram (unsafePerformIO (parseGCLfile file)) n) (k + 1, file, False, False))]
+
+-- main :: IO ()
+-- main = do
+--   let dir = "bench/input/"
+--   files <- listDirectory dir
+--   print [(f, maximum [findk (dir ++ f) n | n <- [2 .. 10]]) | f <- files]
