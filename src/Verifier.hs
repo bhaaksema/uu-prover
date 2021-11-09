@@ -1,6 +1,6 @@
 module Verifier where
 
-import Control.Monad (when)
+import Control.Monad (when, void)
 import Data.Map (empty)
 import Evaluator (addExprVariable, calcWLP, evaluateTreeConds, verifyExpr)
 import GCLParser.GCLDatatype
@@ -35,7 +35,7 @@ run = do
   args <- getArgs
   let parsedArgs@(_, file, _, _) = arguments args
   program <- parseGCLfile file
-  verifyProgram program parsedArgs
+  void (verifyProgram program parsedArgs)
 
 -- Will return if all of the statements were correctly verified
 mapUntilSat :: ((Expr, ProgramPath Expr) -> (IO Result, ProgramPath Expr, Expr)) -> [(Expr, ProgramPath Expr)] -> IO (Result, ProgramPath Expr, Expr)
@@ -52,10 +52,12 @@ mapUntilSat f (x : xs) = do
         Sat -> return (Sat, otherPath, otherWlp)
         _ -> return (Undef, path, wlp)
 
-verifyProgram :: Either a Program -> (Int, [Char], Bool, Bool) -> IO ()
-verifyProgram (Left _) _ = putStrLn "unable to parse program"
+verifyProgram :: Either a Program -> (Int, [Char], Bool, Bool) -> IO Result
+verifyProgram (Left _) _ = do
+  putStrLn "unable to parse program"
+  return Undef
 verifyProgram (Right program) (k, file, printWlp, printPath) = do
-  putStrLn ("verifying " ++ file ++ " for k = " ++ show k)
+  putStrLn ("verifying " ++ file ++ " for K = " ++ show k)
   putStrLn []
 
   -- Start computation time counter
@@ -88,19 +90,22 @@ verifyProgram (Right program) (k, file, printWlp, printPath) = do
   -- Statistics
   putStrLn ("inspected paths: " ++ show (countBranches condPath))
   putStrLn ("inspected paths: " ++ show branches)
-  putStrLn ("Infeasible paths: " ++ show (branches - length wlps))
+  putStrLn ("infeasible paths: " ++ show (branches - length wlps))
   putStrLn ("formula size (atoms): " ++ show (sum (map numExprAtoms wlps)) ++ " from " ++ show (length wlps) ++ " wlps")
 
   -- Print the result of the verification
   putStrLn []
   (final, finalPath, finalWlp) <- mapUntilSat (\(wlp, path) -> (verifyExpr (OpNeg wlp) (varmap, varTypes), path, wlp)) wlpsInfo
-  case final of
+  let result = if branches == 0 then Undef else final
+  case result of
     Unsat -> putStrLn "accept (could not find any counterexamples)"
-    Undef -> putStrLn "undef (at least one path returned undef, but could not find any counteraxamples)"
-    Sat -> do
-      putStrLn ("reject (counterexample in path: " ++ show finalPath ++ ")")
+    Undef -> if branches == 0
+      then putStrLn "undef (set of inspected paths is empty)"
+      else putStrLn "undef (at least one path returned undef, but could not find any counteraxamples)"
+    Sat -> putStrLn ("reject (counterexample in path: " ++ show finalPath ++ ")")
 
   -- Stop computation time counter
   end <- getCPUTime
   let diff = fromIntegral (end - start) / (10 ^ 9)
   printf "computation time: %0.3f ms\n" (diff :: Double)
+  return result
