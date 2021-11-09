@@ -1,41 +1,14 @@
 module Verifier where
 
-import Control.Monad (when, void)
+import Control.Monad (when)
 import Data.Map (empty)
 import Evaluator (addExprVariable, calcWLP, evaluateTreeConds, verifyExpr)
 import GCLParser.GCLDatatype
-import GCLParser.Parser (parseGCLfile)
 import ProgramPath
 import System.CPUTime (getCPUTime)
-import System.Environment (getArgs)
 import Text.Printf (printf)
 import WLP (convertVarMap, findLocvars, numExprAtoms)
 import Z3.Monad (Result (..), astToString, evalZ3)
-
--- The following functions will run the 'main' program and output the required information
--- main loads the file and puts the ParseResult Program through the following functions
-arguments :: [[Char]] -> (Int, [Char], Bool, Bool)
-arguments [] = (10, "test/input/reverse.gcl", False, False)
-arguments ("-K" : arg : xs) = (read arg, a2, a3, a4)
-  where
-    (_, a2, a3, a4) = arguments xs
-arguments ("-file" : arg : xs) = (a1, arg, a3, a4)
-  where
-    (a1, _, a3, a4) = arguments xs
-arguments ("-wlp" : xs) = (a1, a2, True, a4)
-  where
-    (a1, a2, _, a4) = arguments xs
-arguments ("-path" : xs) = (a1, a2, a3, True)
-  where
-    (a1, a2, a3, _) = arguments xs
-arguments (x : xs) = arguments xs
-
-run :: IO ()
-run = do
-  args <- getArgs
-  let parsedArgs@(_, file, _, _) = arguments args
-  program <- parseGCLfile file
-  void (verifyProgram program parsedArgs)
 
 -- Will return if all of the statements were correctly verified
 mapUntilSat :: ((Expr, ProgramPath Expr) -> (IO Result, ProgramPath Expr, Expr)) -> [(Expr, ProgramPath Expr)] -> IO (Result, ProgramPath Expr, Expr)
@@ -99,9 +72,10 @@ verifyProgram (Right program) (k, file, printWlp, printPath) = do
   let result = if branches == 0 then Undef else final
   case result of
     Unsat -> putStrLn "accept (could not find any counterexamples)"
-    Undef -> if branches == 0
-      then putStrLn "undef (set of inspected paths is empty)"
-      else putStrLn "undef (at least one path returned undef, but could not find any counteraxamples)"
+    Undef ->
+      if branches == 0
+        then putStrLn "undef (set of inspected paths is empty)"
+        else putStrLn "undef (at least one path returned undef, but could not find any counteraxamples)"
     Sat -> putStrLn ("reject (counterexample in path: " ++ show finalPath ++ ")")
 
   -- Stop computation time counter
