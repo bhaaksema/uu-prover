@@ -1,5 +1,5 @@
 name: uu-program-verification
-version: 21.10
+version: 21.11
 github: "bhaaksema/uu-program-verification"
 
 dependencies:
