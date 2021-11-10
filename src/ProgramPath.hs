@@ -62,7 +62,7 @@ _constructPath [] = EmptyPath (LitB True)
 errorCheckingPath :: ProgramPath Expr -> ProgramPath Expr
 errorCheckingPath noErrorPath = TreePath (LitB True) Nothing t1 (injectExpression testNoException noErrorPath)
   where
-    assignPath x = LinearPath (BinopExpr Equal (Var "exc") (LitI x)) (Seq (Assign "exc" (LitI x)) (Assert (LitB False)))
+    assignPath x = LinearPath (BinopExpr Equal (Var "exc") (LitI x)) (Assign "exc" (LitI x))
     testNoException = BinopExpr Equal (Var "exc") (LitI 0)
     t1 = TreePath (LitB True) Nothing (assignPath 1) t2
     t2 = TreePath (LitB True) Nothing (assignPath 2) (assignPath 3)

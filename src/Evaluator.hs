@@ -28,7 +28,7 @@ evaluateFullTree treepath@(TreePath cond stmts option1 option2)
 evaluateFullTree linpath@(LinearPath cond stmts)
   | cond == LitB False = []
   | otherwise = do
-    let path = wlp stmts (\v -> LitB True)
+    let path = wlp stmts (considerExpr (BinopExpr Equal (Var "exc") (LitI 0))) -- Postcondition is: exception must be code 0 (no exception)
     let condExpr = considerExpr cond
     [(\vars -> simplifyExpr (BinopExpr Implication (condExpr vars) (path vars)), linpath)]
 evaluateFullTree (EmptyPath cond) = [(const cond, EmptyPath cond)]

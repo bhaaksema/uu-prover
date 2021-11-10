@@ -52,6 +52,7 @@ mapUntilSat f (x : xs) = do
         Sat -> return (Sat, otherPath, otherWlp)
         _ -> return (Undef, path, wlp)
 
+-- Turns an exception code int into a human readable string
 exceptionCodeToString :: Int -> String
 exceptionCodeToString 0 = "0 (No exceptions)"
 exceptionCodeToString 1 = "1 (Division by 0 error)"
@@ -59,6 +60,17 @@ exceptionCodeToString 2 = "2 (Tried to read from invalid array index)"
 exceptionCodeToString 3 = "3 (Invalid invariant used)"
 exceptionCodeToString i = show i ++ " (Unknown exception)"
 
+-- If the program path is a linear path and ends in an explicit exception, print the exception
+printIfException :: ProgramPath Expr -> IO ()
+printIfException (LinearPath _ s) = when hasError $ putStrLn $ "Unhandled exception: " ++ exceptionCodeToString (getErrorCode (last statementList))
+  where
+    statementList = unrollSeq s
+    hasError = not (null statementList) && getErrorCode (last statementList) /= 0
+    getErrorCode (Assign "exc" (LitI code)) = code
+    getErrorCode _ = 0
+printIfException _ = return ()
+
+-- Main funtion that verifies the program
 verifyProgram :: Either a Program -> (Int, [Char], Bool, Bool) -> IO ()
 verifyProgram (Left _) _ = putStrLn "unable to parse program"
 verifyProgram (Right program) (k, file, printWlp, printPath) = do
@@ -110,7 +122,7 @@ verifyProgram (Right program) (k, file, printWlp, printPath) = do
     Sat -> do
       putStrLn ("reject (counterexample in path: " ++ show finalPath ++ ")")
       when printWlp $ putStrLn ("(counterexample in wlp: " ++ show finalWlp ++ ")")
-  --putStrLn $ "Exception code: " ++ exceptionCodeToString (litToInt )
+      printIfException finalPath
 
   -- Stop computation time counter
   end <- getCPUTime
