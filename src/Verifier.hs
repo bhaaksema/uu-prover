@@ -11,8 +11,8 @@ import WLP (convertVarMap, findLocvars, numExprAtoms)
 import Z3.Monad (Result (..), astToString, evalZ3)
 
 -- Will return if all of the statements were correctly verified
-mapUntilSat :: ((Expr, ProgramPath Expr) -> (IO Result, ProgramPath Expr, Expr)) -> [(Expr, ProgramPath Expr)] -> IO (Result, ProgramPath Expr, Expr)
-mapUntilSat f [] = return (Unsat, EmptyPath (LitB True), LitB True)
+mapUntilSat :: ((Expr, [Stmt]) -> (IO Result, [Stmt], Expr)) -> [(Expr, [Stmt])] -> IO (Result, [Stmt], Expr)
+mapUntilSat f [] = return (Unsat, [], LitB True)
 mapUntilSat f (x : xs) = do
   let (r, path, wlp) = f x
   result <- r
@@ -34,14 +34,13 @@ exceptionCodeToString 3 = "3 (Invalid invariant used)"
 exceptionCodeToString i = show i ++ " (Unknown exception)"
 
 -- If the program path is a linear path and ends in an explicit exception, print the exception
-printIfException :: ProgramPath Expr -> IO ()
-printIfException (LinearPath _ s) = when hasError $ putStrLn $ "Unhandled exception: " ++ exceptionCodeToString (getErrorCode (last statementList))
+printIfException :: [Stmt] -> IO ()
+printIfException [] = return ()
+printIfException statements = when hasError $ putStrLn $ "Unhandled exception: " ++ exceptionCodeToString (getErrorCode (last statements))
   where
-    statementList = unrollSeq s
-    hasError = not (null statementList) && getErrorCode (last statementList) /= 0
+    hasError = getErrorCode (last statements) /= 0
     getErrorCode (Assign "exc" (LitI code)) = code
     getErrorCode _ = 0
-printIfException _ = return ()
 
 -- Main funtion that verifies the program
 verifyProgram :: Either a Program -> (Int, [Char], Bool, Bool) -> IO Result
@@ -56,8 +55,6 @@ verifyProgram (Right program) (k, file, printWlp, printPath) = do
   start <- getCPUTime
   let path = constructPath program
   let locVars = findLocvars (stmt program)
-  let flaggedPath = flagInvalid path k
-  let pathsTooLong = numInvalid flaggedPath
   let (clearedPath, branches) = removePaths path k
 
   -- Create a map with all the variables and an initial value of (Var name)

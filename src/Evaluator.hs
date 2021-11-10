@@ -3,36 +3,67 @@
 
 module Evaluator where
 
-import Data.Map (Map, filter, fromList, insert, intersection, keys, toList, (!))
+import Data.Map (Map, empty, filter, fromList, insert, intersection, keys, mapWithKey, toList, (!))
 import Data.Maybe (catMaybes, fromMaybe)
 import GCLParser.GCLDatatype
-import ProgramPath (ProgramPath (..), combinePaths)
+import ProgramPath (ProgramPath (..), combinePaths, unrollSeq)
 import WLP (considerExpr, evalExpr, simplifyExpr, traceVarExpr, wlp)
 import Z3.Monad
 
-evaluateFullTree :: ProgramPath Expr -> [(Map String Expr -> Expr, ProgramPath Expr)]
-evaluateFullTree treepath@(TreePath cond stmts option1 option2)
+evaluateFullTree :: ProgramPath Expr -> (Map String Expr -> Expr) -> [(Map String Expr -> Expr, [Stmt])]
+evaluateFullTree treepath@(TreePath cond stmts option1 option2) postCond
   | cond == LitB False = []
   | otherwise = do
-    let expr1 = evaluateFullTree option1
-    let expr2 = evaluateFullTree option2
+    let expr1 = evaluateFullTree option1 postCond
+    let expr2 = evaluateFullTree option2 postCond
     -- Calculates the wlp over branch node statements
     -- If it has statements, runs wlp using the precondition of expr1, else just returns that precondition
     let wlps1 = map concatPaths expr1
     let wlps2 = map concatPaths expr2
     wlps1 ++ wlps2
   where
-    myPath = maybe (EmptyPath cond) (LinearPath cond) stmts
+    myPath = maybe [] unrollSeq stmts
     addCond wlp = \v -> simplifyExpr (BinopExpr Implication (considerExpr cond v) (wlp v))
-    concatPaths (expr, path) = (addCond (maybe expr (`wlp` expr) stmts), combinePaths myPath path)
-evaluateFullTree linpath@(LinearPath cond stmts)
+    concatPaths (expr, path) = (addCond (maybe expr (`wlp` expr) stmts), myPath ++ path)
+evaluateFullTree whilepath@(AnnotedWhilePath invar guard whilePath nextPath) postCond = do
+  let wlpsOverS = evaluateFullTree whilePath (considerExpr invar)
+  let qs = evaluateFullTree nextPath postCond
+
+  -- Create all possible combinations of the inner while path and the next path.
+  -- Note that all possible combinations need to be checked, as we don't know in advance whether there is an unannoted while within this while.
+  -- Moreover other branching structures need to be evaluated as well (like if-then-else).
+  let combos = [(setup whilePath wlpOverS q, whilePath ++ nextPath) | (wlpOverS, whilePath) <- wlpsOverS, (q, nextPath) <- qs]
+  combos
+  where
+    setup whilePath wlpOverS q vars = do
+      let newVars = freshenModifiedVars whilePath vars
+
+      let wlpOverSEvaluated = wlpOverS newVars
+      let iAndNotG = BinopExpr And invar (OpNeg guard)
+      let iAndG = BinopExpr And invar guard
+      let iNotGImpliesQ = BinopExpr Implication iAndNotG (q newVars)
+      let iGImpliesWlp = BinopExpr Implication iAndG wlpOverSEvaluated
+
+      -- An invariant is valid only if i /\ g => wlp S I AND i /\ ~g => Q AND i = True
+      let evaluatedInvar = considerExpr invar vars
+      let validInvar = considerExpr (BinopExpr And evaluatedInvar (BinopExpr And iNotGImpliesQ iGImpliesWlp)) newVars
+      let triggerExc = q (insert "exc" (LitI 3) vars) -- Run rest of program, but with exception set to 3
+      let invarIfValid = BinopExpr And (BinopExpr Implication validInvar evaluatedInvar) (BinopExpr Implication (OpNeg validInvar) triggerExc)
+      invarIfValid
+
+    -- This function goes through a list of statements and adds variables that are assigned to as a fresh variable a map of existing variables.
+    -- This is used to evaluate the variables in i /\ g = wlp and i /\ ~g => Q as fresh variables, as is required to evaluate these expressions correctly.
+    freshenModifiedVars [] vars = vars
+    freshenModifiedVars (Assign name _ : stmts) vars = insert name (Var name) (freshenModifiedVars stmts vars)
+    freshenModifiedVars (_ : stmts) vars = freshenModifiedVars stmts vars
+evaluateFullTree linpath@(LinearPath cond stmts) postCond
   | cond == LitB False = []
   | otherwise = do
-    let path = wlp stmts (considerExpr (BinopExpr Equal (Var "exc") (LitI 0))) -- Postcondition is: exception must be code 0 (no exception)
+    let path = wlp stmts postCond -- Postcondition is: exception must be code 0 (no exception)
     let condExpr = considerExpr cond
-    [(\vars -> simplifyExpr (BinopExpr Implication (condExpr vars) (path vars)), linpath)]
-evaluateFullTree (EmptyPath cond) = [(const cond, EmptyPath cond)]
-evaluateFullTree InvalidPath = [] --Ignore invalid path
+    [(\vars -> simplifyExpr (BinopExpr Implication (condExpr vars) (path vars)), unrollSeq stmts)]
+evaluateFullTree (EmptyPath cond) postCond = [(const cond, [])]
+evaluateFullTree InvalidPath postCond = [] --Ignore invalid path
 
 evaluateTreeConds :: ProgramPath Expr -> Map String Expr -> Map String (Z3 AST) -> IO (ProgramPath Expr)
 evaluateTreeConds (TreePath cond stmts option1 option2) vars varmap = do
@@ -45,6 +76,7 @@ evaluateTreeConds (TreePath cond stmts option1 option2) vars varmap = do
       newTree1 <- evaluateTreeConds option1 newVars varmap
       newTree2 <- evaluateTreeConds option2 newVars varmap
       return (TreePath condExpr stmts newTree1 newTree2)
+evaluateTreeConds path@(AnnotedWhilePath invar guard whilePath nextPath) vars varmap = return path -- Note that no path can be evaluated anymore now! There could be many possibilities of variables changing inside of the whilePath if it has a tree inside it.
 evaluateTreeConds linpath@(LinearPath cond stmts) vars varmap = do
   let evaluatedCond = considerExpr cond vars
   condExpr <- z3Satisfiable evaluatedCond varmap
@@ -56,9 +88,9 @@ evaluateTreeConds (EmptyPath cond) vars varmap = do
 evaluateTreeConds InvalidPath _ _ = return InvalidPath
 
 -- Calculates the WLP over a program path
-calcWLP :: ProgramPath Expr -> Map String Expr -> [(Expr, ProgramPath Expr)]
+calcWLP :: ProgramPath Expr -> Map String Expr -> [(Expr, [Stmt])]
 calcWLP tree vars = do
-  let wlpsAndTrees = evaluateFullTree tree
+  let wlpsAndTrees = evaluateFullTree tree (considerExpr (BinopExpr Equal (Var "exc") (LitI 0)))
   map (\(expr, path) -> (simplifyExpr (expr vars), path)) wlpsAndTrees
 
 -- Outputs if an expression can be contradicted. If so, also outputs how

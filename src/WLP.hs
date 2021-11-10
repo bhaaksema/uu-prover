@@ -8,18 +8,6 @@ wlp :: Stmt -> (Map String Expr -> Expr) -> Map String Expr -> Expr
 wlp (Assert expr) q vars = BinopExpr And (considerExpr expr vars) (q vars)
 wlp (Assume expr) q vars = BinopExpr Implication (Parens (considerExpr expr vars)) (Parens (q vars))
 wlp Skip q vars = q vars
--- The situation below is artificial: we create it like such when there is an invariant in front of the loop. Otherwise, while should never be in any statement
-wlp (Seq (Assert invar) (While guard stmts)) q vars = do
-  let iAndNotG = BinopExpr And invar (OpNeg guard)
-  let iAndG = BinopExpr And invar guard
-  let wlpOverS = wlp stmts (considerExpr invar) vars
-  let iNotGImpliesQ = considerExpr (BinopExpr Implication iAndNotG (q vars)) vars
-  let iGImpliesWlp = considerExpr (BinopExpr Implication iAndG wlpOverS) vars
-  -- An invariant is valid only if i /\ g => wlp S I AND i /\ ~g => Q AND ~(i = False)
-  let validInvar = BinopExpr And (OpNeg (BinopExpr Equal invar (LitB False))) (BinopExpr And iNotGImpliesQ iGImpliesWlp)
-  let triggerExc = q (insert "exc" (LitI 3) vars) -- Run rest of program, but with exception set to 3
-  let invarIfValid = BinopExpr And (BinopExpr Implication validInvar invar) (BinopExpr Implication (OpNeg validInvar) triggerExc)
-  considerExpr invarIfValid vars
 wlp (Seq stmt1 stmt2) q vars = do
   let stmt2Q = wlp stmt2 q
   let stmt1Q = wlp stmt1 stmt2Q
@@ -74,9 +62,6 @@ considerExpr' (Exists locvarName expr) vars = Exists locvarName (considerExpr ex
 considerExpr' e _ = error ("Unknown expression '" ++ show e ++ "'")
 
 traceVarExpr :: Stmt -> Map String Expr -> Map String Expr
-traceVarExpr (Seq (Assert invar) (While guard stmts)) vars = do
-  -- Whenever an invariant was seen, an error might occur, thus make exc variable again (otherwise a branch condition might be seen as infeasible while it actually is feasible)
-  insert "exc" (Var "exc") vars
 traceVarExpr (Seq stmt1 stmt2) vars = do
   let vars1 = traceVarExpr stmt1 vars -- Variables after statement 1
   let vars2 = traceVarExpr stmt2 vars1 -- Variables after statement 2
