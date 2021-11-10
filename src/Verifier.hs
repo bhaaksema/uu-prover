@@ -4,38 +4,11 @@ import Control.Monad (when)
 import Data.Map (empty, insert)
 import Evaluator (addExprVariable, calcWLP, evaluateTreeConds, verifyExpr)
 import GCLParser.GCLDatatype
-import GCLParser.Parser (parseGCLfile)
 import ProgramPath
 import System.CPUTime (getCPUTime)
-import System.Environment (getArgs)
 import Text.Printf (printf)
 import WLP (convertVarMap, findLocvars, numExprAtoms)
 import Z3.Monad (Result (..), astToString, evalZ3)
-
--- The following functions will run the 'main' program and output the required information
--- main loads the file and puts the ParseResult Program through the following functions
-arguments :: [[Char]] -> (Int, [Char], Bool, Bool)
-arguments [] = (10, "input/test/reverse.gcl", False, False)
-arguments ("-K" : arg : xs) = (read arg, a2, a3, a4)
-  where
-    (_, a2, a3, a4) = arguments xs
-arguments ("-file" : arg : xs) = (a1, arg, a3, a4)
-  where
-    (a1, _, a3, a4) = arguments xs
-arguments ("-wlp" : xs) = (a1, a2, True, a4)
-  where
-    (a1, a2, _, a4) = arguments xs
-arguments ("-path" : xs) = (a1, a2, a3, True)
-  where
-    (a1, a2, a3, _) = arguments xs
-arguments (x : xs) = arguments xs
-
-run :: IO ()
-run = do
-  args <- getArgs
-  let parsedArgs@(_, file, _, _) = arguments args
-  program <- parseGCLfile file
-  verifyProgram program parsedArgs
 
 -- Will return if all of the statements were correctly verified
 mapUntilSat :: ((Expr, ProgramPath Expr) -> (IO Result, ProgramPath Expr, Expr)) -> [(Expr, ProgramPath Expr)] -> IO (Result, ProgramPath Expr, Expr)
@@ -71,10 +44,12 @@ printIfException (LinearPath _ s) = when hasError $ putStrLn $ "Unhandled except
 printIfException _ = return ()
 
 -- Main funtion that verifies the program
-verifyProgram :: Either a Program -> (Int, [Char], Bool, Bool) -> IO ()
-verifyProgram (Left _) _ = putStrLn "unable to parse program"
+verifyProgram :: Either a Program -> (Int, [Char], Bool, Bool) -> IO Result
+verifyProgram (Left _) _ = do
+  putStrLn "unable to parse program"
+  return Undef
 verifyProgram (Right program) (k, file, printWlp, printPath) = do
-  putStrLn ("verifying " ++ file ++ " for k = " ++ show k)
+  putStrLn ("verifying " ++ file ++ " for K = " ++ show k)
   putStrLn []
 
   -- Start computation time counter
@@ -110,15 +85,19 @@ verifyProgram (Right program) (k, file, printWlp, printPath) = do
   -- Statistics
   putStrLn ("inspected paths: " ++ show (countBranches condPath))
   putStrLn ("inspected paths: " ++ show branches)
-  putStrLn ("Infeasible paths: " ++ show (branches - length wlps))
+  putStrLn ("infeasible paths: " ++ show (branches - length wlps))
   putStrLn ("formula size (atoms): " ++ show (sum (map numExprAtoms wlps)) ++ " from " ++ show (length wlps) ++ " wlps")
 
   -- Print the result of the verification
   putStrLn []
   (final, finalPath, finalWlp) <- mapUntilSat (\(wlp, path) -> (verifyExpr (OpNeg wlp) (varmap, varTypes), path, wlp)) wlpsInfo
-  case final of
+  let result = if branches == 0 then Undef else final
+  case result of
     Unsat -> putStrLn "accept (could not find any counterexamples)"
-    Undef -> putStrLn "undef (at least one path returned undef, but could not find any counteraxamples)"
+    Undef ->
+      if branches == 0
+        then putStrLn "undef (set of inspected paths is empty)"
+        else putStrLn "undef (at least one path returned undef, but could not find any counteraxamples)"
     Sat -> do
       putStrLn ("reject (counterexample in path: " ++ show finalPath ++ ")")
       when printWlp $ putStrLn ("(counterexample in wlp: " ++ show finalWlp ++ ")")
@@ -128,3 +107,4 @@ verifyProgram (Right program) (k, file, printWlp, printPath) = do
   end <- getCPUTime
   let diff = fromIntegral (end - start) / (10 ^ 9)
   printf "computation time: %0.3f ms\n" (diff :: Double)
+  return result

@@ -143,10 +143,9 @@ verifyExpr expr (z3vars, types) =
 -- Checks an expression using a Z3 variable map. If it is not satisfiable will return the LitB expression, else the original expression.
 z3Satisfiable :: Expr -> Map String (Z3 AST) -> IO Expr
 z3Satisfiable expr varmap = do
-  evalZ3 script >>= \result ->
-    case result of
-      Sat -> return expr
-      _ -> return (LitB False)
+  evalZ3 script >>= \case
+    Sat -> return expr
+    _ -> return (LitB False)
   where
     script = do
       reset
