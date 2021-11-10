@@ -203,6 +203,7 @@ numConditionFalse (LinearPath cond _) = if cond == LitB False then 1 else 0
 countStatements :: Num p => Stmt -> p
 countStatements (Seq a b) = countStatements a + countStatements b
 countStatements (Block _ stmts) = countStatements stmts
+countStatements (While _ stmts) = countStatements stmts
 countStatements _ = 1
 
 -- Print the whole tree for the given program path
