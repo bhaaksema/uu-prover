@@ -1,7 +1,7 @@
 module Verifier where
 
 import Control.Monad (when)
-import Data.Map (empty, insert)
+import Data.Map (Map, empty, insert)
 import Evaluator (addExprVariable, calcWLP, evaluateTreeConds, verifyExpr)
 import GCLParser.GCLDatatype
 import ProgramPath
@@ -10,23 +10,35 @@ import Text.Printf (printf)
 import WLP (convertVarMap, findLocvars, numExprAtoms)
 import Z3.Monad (Result (..), astToString, evalZ3)
 
+type WLP = (Expr, Map String Expr)
+
+type PathStatements = [Stmt]
+
+type WLPEvaluatingFunction = ((WLP, PathStatements) -> (IO (Result, ExceptionCode), PathStatements, WLP))
+
+type WLPEvaluationResult = IO ((Result, ExceptionCode), PathStatements, WLP)
+
+type WLPList = [(WLP, PathStatements)]
+
+type ExceptionCode = Integer
+
 -- Will return if all of the statements were correctly verified
-mapUntilSat :: ((Expr, [Stmt]) -> (IO Result, [Stmt], Expr)) -> [(Expr, [Stmt])] -> IO (Result, [Stmt], Expr)
-mapUntilSat f [] = return (Unsat, [], LitB True)
+mapUntilSat :: WLPEvaluatingFunction -> WLPList -> WLPEvaluationResult
+mapUntilSat f [] = return ((Unsat, 0), [], (LitB True, empty)) -- This means no invalid WLP could be found
 mapUntilSat f (x : xs) = do
   let (r, path, wlp) = f x
-  result <- r
+  (result, exc) <- r
   case result of
-    Sat -> return (Sat, path, wlp)
+    Sat -> return ((Sat, exc), path, wlp)
     Unsat -> mapUntilSat f xs
     Undef -> do
-      (others, otherPath, otherWlp) <- mapUntilSat f xs
+      ((others, otherExc), otherPath, otherWlp) <- mapUntilSat f xs
       case others of
-        Sat -> return (Sat, otherPath, otherWlp)
-        _ -> return (Undef, path, wlp)
+        Sat -> return ((Sat, otherExc), otherPath, otherWlp)
+        _ -> return ((Undef, otherExc), path, wlp)
 
 -- Turns an exception code int into a human readable string
-exceptionCodeToString :: Int -> String
+exceptionCodeToString :: ExceptionCode -> String
 exceptionCodeToString 0 = "0 (No exceptions)"
 exceptionCodeToString 1 = "1 (Division by 0 error)"
 exceptionCodeToString 2 = "2 (Tried to read from invalid array index)"
@@ -34,13 +46,9 @@ exceptionCodeToString 3 = "3 (Invalid invariant used)"
 exceptionCodeToString i = show i ++ " (Unknown exception)"
 
 -- If the program path is a linear path and ends in an explicit exception, print the exception
-printIfException :: [Stmt] -> IO ()
-printIfException [] = return ()
-printIfException statements = when hasError $ putStrLn $ "Unhandled exception: " ++ exceptionCodeToString (getErrorCode (last statements))
-  where
-    hasError = getErrorCode (last statements) /= 0
-    getErrorCode (Assign "exc" (LitI code)) = code
-    getErrorCode _ = 0
+printIfException :: ExceptionCode -> IO ()
+printIfException 0 = return ()
+printIfException i = putStrLn $ "Unhandled exception: " ++ exceptionCodeToString i
 
 -- Main funtion that verifies the program
 verifyProgram :: Either a Program -> (Int, [Char], Bool, Bool) -> IO Result
@@ -68,7 +76,7 @@ verifyProgram (Right program) (k, file, printWlp, printPath) = do
 
   -- Calculate the wlp and initial variable values over the tree
   let wlpsInfo = calcWLP condPath vars
-  let wlps = map fst wlpsInfo
+  let wlps = map (fst . fst) wlpsInfo
 
   -- Print path if the argument -path was specified
   when printPath $ putStrLn "The path is:"
@@ -87,8 +95,8 @@ verifyProgram (Right program) (k, file, printWlp, printPath) = do
 
   -- Print the result of the verification
   putStrLn []
-  (final, finalPath, finalWlp) <- mapUntilSat (\(wlp, path) -> (verifyExpr (OpNeg wlp) (varmap, varTypes), path, wlp)) wlpsInfo
-  let result = if branches == 0 then Undef else final
+  ((evalVerdict, excCode), finalPath, (finalWlp, finalVars)) <- mapUntilSat (\((wlp, vars), path) -> (verifyExpr (OpNeg wlp) (varmap, vars, varTypes), path, (wlp, vars))) wlpsInfo
+  let result = if branches == 0 then Undef else evalVerdict
   case result of
     Unsat -> putStrLn "accept (could not find any counterexamples)"
     Undef ->
@@ -98,7 +106,7 @@ verifyProgram (Right program) (k, file, printWlp, printPath) = do
     Sat -> do
       putStrLn ("reject (counterexample in path: " ++ show finalPath ++ ")")
       when printWlp $ putStrLn ("(counterexample in wlp: " ++ show finalWlp ++ ")")
-      printIfException finalPath
+      printIfException excCode
 
   -- Stop computation time counter
   end <- getCPUTime

@@ -51,7 +51,7 @@ _constructPath (Assert invar : w@(While expr stmt) : stmts) = tree -- A loop wit
   where
     tree = TreePath (LitB True) Nothing whilePath InvalidPath
     -- Unroll everything in the while block, needed if there are special instructions (if-then-else, nested while) inside of this wile
-    whilePath = AnnotedWhilePath invar expr (_constructPath $ listify stmt) (errorCheckingPath (_constructPath stmts))
+    whilePath = AnnotedWhilePath invar expr (_constructPath $ listify stmt) (_constructPath stmts)
 _constructPath ((Block vars stmt) : stmts) = error $ "Found unfiltered block! \r\n" ++ show stmt -- Block should be filtered out during splitList
 _constructPath (stmt : stmts) = combinePaths (LinearPath (LitB True) stmt) $ _constructPath stmts
 _constructPath [] = EmptyPath (LitB True)
@@ -63,9 +63,11 @@ errorCheckingPath :: ProgramPath Expr -> ProgramPath Expr
 errorCheckingPath noErrorPath = TreePath (LitB True) Nothing (injectExpression testNoException noErrorPath) t1
   where
     assignPath x = LinearPath (BinopExpr Equal (Var "exc") (LitI x)) (Assign "exc" (LitI x))
+    unknownException = LinearPath (LitB True) (Assign "exc" (LitI (-1))) -- This path will only be taken if exc is not 0, and not one of the already defined numbers
     testNoException = BinopExpr Equal (Var "exc") (LitI 0)
-    t1 = TreePath (LitB True) Nothing (assignPath 1) t2
-    t2 = TreePath (LitB True) Nothing (assignPath 2) (assignPath 3)
+    t1 = TreePath (OpNeg testNoException) Nothing (assignPath 1) t2
+    t2 = TreePath (LitB True) Nothing (assignPath 2) t3
+    t3 = TreePath (LitB True) Nothing (assignPath 3) unknownException
 
 -- Turns seq into a list of statements
 unrollSeq :: Stmt -> [Stmt]

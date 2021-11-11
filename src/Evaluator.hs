@@ -4,13 +4,14 @@
 module Evaluator where
 
 import Data.Map (Map, empty, filter, fromList, insert, intersection, keys, mapWithKey, toList, (!))
+import qualified Data.Map (map)
 import Data.Maybe (catMaybes, fromMaybe)
 import GCLParser.GCLDatatype
 import ProgramPath (ProgramPath (..), combinePaths, unrollSeq)
-import WLP (considerExpr, evalExpr, simplifyExpr, traceVarExpr, wlp)
+import WLP (PostCondition, considerExpr, evalExpr, simplifyExpr, traceVarExpr, wlp)
 import Z3.Monad
 
-evaluateFullTree :: ProgramPath Expr -> (Map String Expr -> Expr) -> [(Map String Expr -> Expr, [Stmt])]
+evaluateFullTree :: ProgramPath Expr -> PostCondition -> [(Map String Expr -> (Expr, Map String Expr), [Stmt])]
 evaluateFullTree treepath@(TreePath cond stmts option1 option2) postCond
   | cond == LitB False = []
   | otherwise = do
@@ -23,10 +24,10 @@ evaluateFullTree treepath@(TreePath cond stmts option1 option2) postCond
     wlps1 ++ wlps2
   where
     myPath = maybe [] unrollSeq stmts
-    addCond wlp = \v -> simplifyExpr (BinopExpr Implication (considerExpr cond v) (wlp v))
-    concatPaths (expr, path) = (addCond (maybe expr (`wlp` expr) stmts), myPath ++ path)
+    myStmts = maybe Skip (Seq (Assume cond)) stmts
+    concatPaths (wlpAndVars, path) = (wlp myStmts wlpAndVars, myPath ++ path)
 evaluateFullTree whilepath@(AnnotedWhilePath invar guard whilePath nextPath) postCond = do
-  let wlpsOverS = evaluateFullTree whilePath (considerExpr invar)
+  let wlpsOverS = evaluateFullTree whilePath (\vars -> (considerExpr invar vars, vars))
   let qs = evaluateFullTree nextPath postCond
 
   -- Create all possible combinations of the inner while path and the next path.
@@ -35,10 +36,11 @@ evaluateFullTree whilepath@(AnnotedWhilePath invar guard whilePath nextPath) pos
   let combos = [(setup whilePath wlpOverS q, whilePath ++ nextPath) | (wlpOverS, whilePath) <- wlpsOverS, (q, nextPath) <- qs]
   combos
   where
-    setup whilePath wlpOverS q vars = do
+    setup whilePath wlpOverS qAndVars vars = do
       let newVars = freshenModifiedVars whilePath vars
+      let q = fst . qAndVars
 
-      let wlpOverSEvaluated = wlpOverS newVars
+      let wlpOverSEvaluated = fst $ wlpOverS newVars
       let iAndNotG = BinopExpr And invar (OpNeg guard)
       let iAndG = BinopExpr And invar guard
       let iNotGImpliesQ = BinopExpr Implication iAndNotG (q newVars)
@@ -49,7 +51,11 @@ evaluateFullTree whilepath@(AnnotedWhilePath invar guard whilePath nextPath) pos
       let validInvar = considerExpr (BinopExpr And evaluatedInvar (BinopExpr And iNotGImpliesQ iGImpliesWlp)) newVars
       let triggerExc = q (insert "exc" (LitI 3) vars) -- Run rest of program, but with exception set to 3
       let invarIfValid = BinopExpr And (BinopExpr Implication validInvar evaluatedInvar) (BinopExpr Implication (OpNeg validInvar) triggerExc)
-      invarIfValid
+
+      let oldExcZero = BinopExpr Equal (vars ! "exc") (LitI 0)
+      let newExcValue = NewStore (RepBy (BinopExpr Or validInvar (OpNeg oldExcZero)) (vars ! "exc") (LitI 3))
+      let finalVars = insert "exc" newExcValue vars
+      (invarIfValid, finalVars)
 
     -- This function goes through a list of statements and adds variables that are assigned to as a fresh variable a map of existing variables.
     -- This is used to evaluate the variables in i /\ g = wlp and i /\ ~g => Q as fresh variables, as is required to evaluate these expressions correctly.
@@ -61,8 +67,8 @@ evaluateFullTree linpath@(LinearPath cond stmts) postCond
   | otherwise = do
     let path = wlp stmts postCond -- Postcondition is: exception must be code 0 (no exception)
     let condExpr = considerExpr cond
-    [(\vars -> simplifyExpr (BinopExpr Implication (condExpr vars) (path vars)), unrollSeq stmts)]
-evaluateFullTree (EmptyPath cond) postCond = [(const cond, [])]
+    [(\vars -> (simplifyExpr (BinopExpr Implication (condExpr vars) (fst (path vars))), snd (path vars)), unrollSeq stmts)]
+evaluateFullTree (EmptyPath cond) postCond = [(\vars -> (cond, vars), [])]
 evaluateFullTree InvalidPath postCond = [] --Ignore invalid path
 
 evaluateTreeConds :: ProgramPath Expr -> Map String Expr -> Map String (Z3 AST) -> IO (ProgramPath Expr)
@@ -88,15 +94,19 @@ evaluateTreeConds (EmptyPath cond) vars varmap = do
 evaluateTreeConds InvalidPath _ _ = return InvalidPath
 
 -- Calculates the WLP over a program path
-calcWLP :: ProgramPath Expr -> Map String Expr -> [(Expr, [Stmt])]
+calcWLP :: ProgramPath Expr -> Map String Expr -> [((Expr, Map String Expr), [Stmt])]
 calcWLP tree vars = do
-  let wlpsAndTrees = evaluateFullTree tree (considerExpr (BinopExpr Equal (Var "exc") (LitI 0)))
-  map (\(expr, path) -> (simplifyExpr (expr vars), path)) wlpsAndTrees
+  let postCondition = BinopExpr Equal (Var "exc") (LitI 0) -- Postcondition is: there was no error
+  let wlpPostCondition = \vars -> (considerExpr postCondition vars, vars) -- Postcondition formualted as a function that the wlp function is able to handle
+  let wlpsAndTrees = evaluateFullTree tree wlpPostCondition
+  map (\(exprAndVars, path) -> (simplify $ exprAndVars vars, path)) wlpsAndTrees
+  where
+    simplify (expr, vars) = (simplifyExpr expr, vars)
 
 -- Outputs if an expression can be contradicted. If so, also outputs how
-verifyExpr :: Expr -> (Map String (Z3 AST), Map String Type) -> IO Result
-verifyExpr expr (z3vars, types) =
-  evalZ3 script >>= \(result, intMaybe, boolMaybe, arrayMaybe) ->
+verifyExpr :: Expr -> (Map String (Z3 AST), Map String Expr, Map String Type) -> IO (Result, Integer)
+verifyExpr expr (z3vars, finalVarsExpr, types) =
+  evalZ3 script >>= \(result, intMaybe, finalIntMaybe, boolMaybe, finalBoolMaybe, arrayMaybe) ->
     case result of
       Sat -> do
         let intValueMap = fromList $ zip (keys intNames) (fromMaybe [] intMaybe) -- Map of (name, Integer), allows us to get array lengths (using #name)
@@ -106,18 +116,25 @@ verifyExpr expr (z3vars, types) =
         putStrLn "counterexample found: "
           >> putStrLn "ints"
           >> print (map fst (toList intNames))
-          >> putStrLn (unMaybe intMaybe)
+          >> putStr (unMaybe intMaybe)
+          >> putStrLn " (Input values)"
+          >> putStr (unMaybe finalIntMaybe)
+          >> putStrLn " (Estimate of final values)"
           >> putStrLn []
           >> putStrLn "bools"
           >> print (map fst (toList boolNames))
-          >> putStrLn (unMaybe boolMaybe)
+          >> putStr (unMaybe boolMaybe)
+          >> putStrLn " (Input values)"
+          >> putStr (unMaybe finalBoolMaybe)
+          >> putStrLn " (Estimate of final values)"
           >> putStrLn []
-          >> putStrLn "arrays"
+          >> putStrLn "arrays (only input values)"
           >> print (map fst (toList arrayNames))
           >> print arrayValues
           >> putStrLn []
-        return result
-      _ -> return result
+        let excValue = fromList (zip (keys intNames) (fromMaybe [] finalIntMaybe)) ! "exc"
+        return (result, excValue)
+      _ -> return (result, 0) -- Since no counterexample was found, the postcondition of exc == 0 was satisfied and exc must equal 0
   where
     -- Dictonaries of variable, type with only the given type
     intNames = Data.Map.filter (onlyPrimitive PTInt) types
@@ -138,6 +155,10 @@ verifyExpr expr (z3vars, types) =
       (_, intMaybe) <- withModel $ \m ->
         catMaybes <$> mapM (evalInt m) newVars
 
+      newVars <- mapM snd (toList finalInts)
+      (_, finalIntMaybe) <- withModel $ \m ->
+        catMaybes <$> mapM (evalInt m) newVars
+
       let arrayNames = map fst (toList z3Arrays)
       arrayElements <- mapM (\name -> sequence (createArrayGetter name 0)) arrayNames
       arrayMaybe' <- mapM (\a -> withModel $ \m -> catMaybes <$> mapM (evalInt m) a) arrayElements
@@ -146,11 +167,16 @@ verifyExpr expr (z3vars, types) =
       newVars <- mapM snd (toList z3Bools)
       (result, boolMaybe) <- withModel $ \m ->
         catMaybes <$> mapM (evalBool m) newVars
-      return (result, intMaybe, boolMaybe, arrayMaybe)
+
+      newVars <- mapM snd (toList finalBools)
+      (_, finalBoolMaybe) <- withModel $ \m ->
+        catMaybes <$> mapM (evalBool m) newVars
+      return (result, intMaybe, finalIntMaybe, boolMaybe, finalBoolMaybe, arrayMaybe)
 
     -- Dicts of z3 variables that have only a specific type
-    z3Ints = intersection z3vars intNames
-    z3Bools = intersection z3vars boolNames
+    finalVars = Data.Map.map (`evalExpr` z3vars) finalVarsExpr
+    (z3Ints, finalInts) = (intersection z3vars intNames, intersection finalVars intNames)
+    (z3Bools, finalBools) = (intersection z3vars boolNames, intersection finalVars boolNames)
     z3Arrays = intersection z3vars arrayNames
 
     -- Filters to get variables of a specific type. Necessary because we need different eval functions for bools, arrays and ints.
