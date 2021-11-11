@@ -11,6 +11,8 @@ type PostCondition = WLPType
 
 type PostConditions = (WLPType, WLPType)
 
+changeIf cond trueValue falseValue = NewStore (RepBy cond trueValue falseValue)
+
 wlp :: Stmt -> PostConditions -> WLPType
 wlp (Assert expr) (q, r) vars = first (BinopExpr And (considerExpr expr vars)) (q vars)
 wlp (Assume expr) (q, r) vars = first (BinopExpr Implication (Parens (considerExpr expr vars)) . Parens) (q vars)
@@ -36,7 +38,10 @@ wlp (AAssign name indexE expr) (q, r) vars = do
   let array = vars ! name
   let value = considerExpr expr vars
   let index = considerExpr indexE vars
-  let newVars = insert name (RepBy array index value) vars
+  let newVars' = insert name (RepBy array index value) vars
+  let lowerBound = BinopExpr LessThan index (LitI 0)
+  let upperBound = BinopExpr GreaterThanEqual index (Var $ "#" ++ name)
+  let newVars = insert "exc" (changeIf (BinopExpr Or lowerBound upperBound) (LitI 2) (newVars' ! "exc")) newVars'
   q newVars
 wlp s _ _ = error ("Unknown statement '" ++ show s ++ "'")
 
@@ -70,6 +75,7 @@ considerExpr' (Forall locvarName expr) vars = Forall locvarName (considerExpr ex
 considerExpr' (Exists locvarName expr) vars = Exists locvarName (considerExpr expr boundedVars)
   where
     boundedVars = insert locvarName (Var locvarName) vars
+considerExpr' e@NewStore {} _ = e -- This is a wrapper for an if-then-else, thus we just pass the value along
 considerExpr' e _ = error ("Unknown expression '" ++ show e ++ "'")
 
 traceVarExpr :: Stmt -> Map String Expr -> Map String Expr
