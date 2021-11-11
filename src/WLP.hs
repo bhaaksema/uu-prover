@@ -9,27 +9,30 @@ type WLPType = Map String Expr -> (Expr, Map String Expr)
 
 type PostCondition = WLPType
 
-wlp :: Stmt -> PostCondition -> WLPType
-wlp (Assert expr) q vars = first (BinopExpr And (considerExpr expr vars)) (q vars)
-wlp (Assume expr) q vars = first (BinopExpr Implication (Parens (considerExpr expr vars)) . Parens) (q vars)
-wlp Skip q vars = q vars
-wlp (Seq stmt1 stmt2) q vars = do
-  let stmt2Q = wlp stmt2 q
-  let stmt1Q = wlp stmt1 stmt2Q
+type PostConditions = (WLPType, WLPType)
+
+wlp :: Stmt -> PostConditions -> WLPType
+wlp (Assert expr) (q, r) vars = first (BinopExpr And (considerExpr expr vars)) (q vars)
+wlp (Assume expr) (q, r) vars = first (BinopExpr Implication (Parens (considerExpr expr vars)) . Parens) (q vars)
+wlp Skip (q, r) vars = q vars
+wlp (Seq stmt1 stmt2) (q, r) vars = do
+  let stmt2Q = wlp stmt2 (q, r)
+  let stmt1Q = wlp stmt1 (stmt2Q, r)
   stmt1Q vars
-wlp (Assign name expr) q vars = do
+wlp (Assign name expr) (q, r) vars = do
+  let q' = if name == "exc" then r else q
   let value = considerExpr expr vars
   let isArray = member ("#" ++ name) vars
   let basicUpdate = insert name value vars -- Update the value of this variable to the expression
-  let qIfPrimitive = q basicUpdate --If this is a primitive, evaluate q using the basic map
+  let qIfPrimitive = q' basicUpdate --If this is a primitive, evaluate q using the basic map
   let arrayLengthUpdate = insert ("#" ++ name) (vars ! ("#" ++ getArrayName expr)) basicUpdate
-  let qIfArray = q arrayLengthUpdate --If this is an array, also update the array length of this variable. Then evaluate q using the new map.
+  let qIfArray = q' arrayLengthUpdate --If this is an array, also update the array length of this variable. Then evaluate q using the new map.
   if isArray then qIfArray else qIfPrimitive
   where
     getArrayName (Var name) = name -- Get name of the variable
     getArrayName (RepBy expr _ _) = getArrayName expr -- Unwrap RepBy to get the name of the original array (we need it to find the length variable later on)
     getArrayName expr = error "Trying to get array name from variable that is not an array: " ++ show expr
-wlp (AAssign name indexE expr) q vars = do
+wlp (AAssign name indexE expr) (q, r) vars = do
   let array = vars ! name
   let value = considerExpr expr vars
   let index = considerExpr indexE vars
@@ -43,6 +46,7 @@ findLocvars (Seq stmt1 stmt2) = findLocvars stmt1 ++ findLocvars stmt2
 findLocvars (While _ stmt) = findLocvars stmt
 findLocvars (IfThenElse _ stmt1 stmt2) = findLocvars stmt1 ++ findLocvars stmt2
 findLocvars (Block vars stmt) = vars ++ findLocvars stmt
+findLocvars (TryCatch excName tryBlock catchBlock) = VarDeclaration excName (PType PTInt) : findLocvars tryBlock ++ findLocvars catchBlock
 findLocvars _ = []
 
 -- Will evaluate the expression using the given variable environment

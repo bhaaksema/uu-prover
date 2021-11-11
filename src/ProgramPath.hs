@@ -21,6 +21,12 @@ data ProgramPath a
         innerPath :: ProgramPath a,
         nextPath :: ProgramPath a
       }
+  | TryCatchPath
+      { try :: ProgramPath a,
+        exceptionLocalname :: String,
+        catch :: ProgramPath a,
+        nextPath :: ProgramPath a
+      }
   | EmptyPath a -- Path that does not yet contain any statements or branches
   | InvalidPath --  Either because branch condition was unfeasible or because depth was too deep
   deriving (Show)
@@ -52,6 +58,12 @@ _constructPath (Assert invar : w@(While expr stmt) : stmts) = tree -- A loop wit
     tree = TreePath (LitB True) Nothing whilePath InvalidPath
     -- Unroll everything in the while block, needed if there are special instructions (if-then-else, nested while) inside of this wile
     whilePath = AnnotedWhilePath invar expr (_constructPath $ listify stmt) (_constructPath stmts)
+_constructPath (TryCatch eName tryStmts catchStmts : stmts) = tree
+  where
+    try = TryCatchPath (_constructPath $ listify tryStmts) eName (_constructPath $ listify catchStmts) (_constructPath stmts)
+    excZero = BinopExpr Equal (Var "exc") (LitI 0)
+    tryTree = TreePath excZero Nothing try InvalidPath
+    tree = TreePath (LitB True) Nothing tryTree (EmptyPath (OpNeg excZero))
 _constructPath ((Block vars stmt) : stmts) = error $ "Found unfiltered block! \r\n" ++ show stmt -- Block should be filtered out during splitList
 _constructPath (stmt : stmts) = combinePaths (LinearPath (LitB True) stmt) $ _constructPath stmts
 _constructPath [] = EmptyPath (LitB True)
@@ -89,8 +101,9 @@ splitList' :: [Stmt] -> [Stmt] -> [Stmt]
 splitList' [] [] = []
 splitList' [] stmts = rollSeqr stmts
 splitList' (w@While {} : statements) stmts = rollSeqr stmts ++ (w : splitList statements)
+splitList' (t@TryCatch {} : statements) stmts = rollSeqr stmts ++ (t : splitList statements)
 splitList' (Assert e : w@While {} : statements) stmts = rollSeqr stmts ++ [Assert e] ++ (w : splitList statements) -- Loop invariant found
-splitList' (w@IfThenElse {} : statements) stmts = rollSeqr stmts ++ (w : splitList statements)
+splitList' (i@IfThenElse {} : statements) stmts = rollSeqr stmts ++ (i : splitList statements)
 splitList' ((Block _ stmt) : statements) stmts = splitList' (listify stmt ++ statements) stmts -- Take code out of the block, and process as its own entity
 splitList' (s : statements) stmts = splitList' statements (s : stmts)
 
@@ -111,6 +124,7 @@ injectExpression expr (LinearPath cond stmts) = LinearPath (BinopExpr And cond e
 injectExpression expr (TreePath cond stmts option1 option2) = TreePath (BinopExpr And cond expr) stmts option1 option2
 injectExpression expr (EmptyPath cond) = EmptyPath (BinopExpr And cond expr)
 injectExpression _ AnnotedWhilePath {} = error "Cannot inject expression into while block"
+injectExpression _ TryCatchPath {} = error "Cannot inject expression into try-catch block"
 injectExpression _ InvalidPath = InvalidPath
 
 -- Utility function that can combine two ProgramPaths into a single ProgramPath
@@ -132,8 +146,8 @@ combinePaths _ _ = InvalidPath
 --
 
 --Wrapper for actual function, so it wont keep evaluating the infinite structure
-removePaths :: ProgramPath Expr -> Int -> (ProgramPath Expr, Int)
-removePaths tree depth
+removePaths :: Int -> ProgramPath Expr -> (ProgramPath Expr, Int)
+removePaths depth tree
   | depth <= 0 = (InvalidPath, 0)
   | otherwise = _removePaths tree depth
 
@@ -145,8 +159,8 @@ _removePaths (TreePath cond tStmts pathA pathB) depth
   where
     baseDepth = splitDepth tStmts depth -- How many statements happen before the branch
     remDepth = depth - baseDepth -- The depth remaining after the preceding statements
-    (newA, newACount) = removePaths pathA remDepth -- Evaluate path A, see if it is feasible given the depth
-    (newB, newBCount) = removePaths pathB remDepth -- Evaluate path B, see if it is feasible given the depth
+    (newA, newACount) = removePaths remDepth pathA -- Evaluate path A, see if it is feasible given the depth
+    (newB, newBCount) = removePaths remDepth pathB -- Evaluate path B, see if it is feasible given the depth
     pruneInvalidBranch (TreePath cond _ InvalidPath InvalidPath) = (InvalidPath, 0) -- Invalidate path if both branches are unfeasible
     --
     pruneInvalidBranch tree@(TreePath _ _ _ InvalidPath) = (tree, newACount)
@@ -154,13 +168,23 @@ _removePaths (TreePath cond tStmts pathA pathB) depth
     pruneInvalidBranch tree = (tree, newACount + newBCount)
 _removePaths (AnnotedWhilePath invar guard whilePath postPath) depth = pruneInvalidWhile (AnnotedWhilePath invar guard newA newB) -- Evaluate both paths. If any turn out to be unfeasible this node is pruned as well
   where
-    (newA, newACount) = removePaths whilePath (depth - bDepth) -- Evaluate path A, see if it is feasible given the depth
-    (newB, newBCount) = removePaths postPath depth -- Evaluate path B, see if it is feasible given the depth
+    (newA, newACount) = removePaths (depth - bDepth) whilePath -- Evaluate path A, see if it is feasible given the depth
+    (newB, newBCount) = removePaths depth postPath -- Evaluate path B, see if it is feasible given the depth
     bDepth = totalDepth newB depth
     pruneInvalidWhile (AnnotedWhilePath _ _ InvalidPath _) = (InvalidPath, 0)
     pruneInvalidWhile (AnnotedWhilePath _ _ _ InvalidPath) = (InvalidPath, 0)
     --
     pruneInvalidWhile while = (while, newACount * newBCount)
+_removePaths (TryCatchPath tryPath excName catchPath nextPath) depth = pruneInvalidTry (TryCatchPath newA excName newB newC) -- Evaluate both paths. If any turn out to be unfeasible this node is pruned as well
+  where
+    (newA, newACount) = removePaths depth tryPath -- Evaluate path A, see if it is feasible given the depth
+    (newB, newBCount) = removePaths depth catchPath -- Evaluate path B, see if it is feasible given the depth
+    (newC, newCCount) = removePaths depth nextPath -- Evaluate everything after this block, see if it is feasible given the depth
+    pruneInvalidTry (TryCatchPath InvalidPath _ _ _) = (InvalidPath, 0)
+    pruneInvalidTry (TryCatchPath _ _ InvalidPath _) = (InvalidPath, 0)
+    pruneInvalidTry (TryCatchPath _ _ _ InvalidPath) = (InvalidPath, 0)
+    --
+    pruneInvalidTry try = (try, newACount * newBCount * newCCount)
 _removePaths linpath@LinearPath {} depth
   | depth < totalDepth linpath depth = (InvalidPath, 0) -- Make path unfeasible if it exceeds the depth
   | otherwise = (linpath, 1)
@@ -175,6 +199,7 @@ _removePaths (EmptyPath _) _ = (InvalidPath, 0) -- Invalidate empty paths
 countBranches :: Num p => ProgramPath a -> p
 countBranches (TreePath _ _ option1 option2) = countBranches option1 + countBranches option2
 countBranches (AnnotedWhilePath _ _ option1 option2) = countBranches option1 * countBranches option2
+countBranches (TryCatchPath option1 _ option2 option3) = countBranches option1 * countBranches option2 * countBranches option3
 countBranches InvalidPath = 0
 countBranches (EmptyPath _) = 0
 countBranches LinearPath {} = 1
@@ -190,7 +215,8 @@ numConditionFalse :: Num p => ProgramPath Expr -> p
 numConditionFalse t@(TreePath cond _ option1 option2)
   | cond == LitB False = countBranches t
   | otherwise = numConditionFalse option1 + numConditionFalse option2
-numConditionFalse t@(AnnotedWhilePath _ _ option1 option2) = numConditionFalse option1 * numConditionFalse option2
+numConditionFalse (AnnotedWhilePath _ _ option1 option2) = numConditionFalse option1 * numConditionFalse option2
+numConditionFalse (TryCatchPath option1 _ option2 option3) = numConditionFalse option1 * numConditionFalse option2 * numConditionFalse option3
 numConditionFalse InvalidPath = 0
 numConditionFalse (EmptyPath _) = 0
 numConditionFalse (LinearPath cond _) = if cond == LitB False then 1 else 0
@@ -237,6 +263,30 @@ __printTree (AnnotedWhilePath invar guard option1 option2) depth k =
     baseDepth = totalDepth option2 depth
     remDepth = depth - baseDepth
     tabs = replicate (2 * (k - depth)) ' ' -- Tabs for same level
+__printTree (TryCatchPath tryPath e catchPath nextPath) depth k =
+  tabs
+    ++ "TRY {\n"
+    ++ tabs
+    ++ _printTree tryPath remDepth' k
+    ++ "\n"
+    ++ tabs
+    ++ "}"
+    ++ "\n"
+    ++ "CATCH "
+    ++ show e
+    ++ "{ \n"
+    ++ tabs
+    ++ _printTree catchPath remDepth k
+    ++ "\n"
+    ++ tabs
+    ++ "}"
+    ++ _printTree nextPath depth k
+  where
+    baseDepth = totalDepth nextPath depth
+    baseDepth' = totalDepth catchPath baseDepth
+    remDepth = depth - baseDepth
+    remDepth' = depth - baseDepth - baseDepth'
+    tabs = replicate (2 * (k - depth)) ' ' -- Tabs for same level
 __printTree (TreePath cond tStmts option1 option2) depth k =
   tabs
     ++ "[ "
@@ -274,10 +324,15 @@ _totalDepth (TreePath _ tStmts option1 option2) depth = baseDepth + max (totalDe
   where
     baseDepth = splitDepth tStmts depth -- Length of preceding statements
     remDepth = depth - baseDepth -- Depth remaining to explore after the preceding statements
-_totalDepth (AnnotedWhilePath _ _ option1 option2) depth = baseDepth + totalDepth option1 remDepth --Length of a branching path is length of preceding statements + max(length branch 1, length branch 2)
+_totalDepth (AnnotedWhilePath _ _ option1 option2) depth = baseDepth + totalDepth option1 remDepth --Length of a while path is length of inner statements + length of next statements
   where
     baseDepth = totalDepth option2 depth -- Length of preceding statements
     remDepth = depth - baseDepth -- Depth remaining to explore after the preceding statements
+_totalDepth (TryCatchPath option1 _ option2 option3) depth = depth1 * depth2 * depth3
+  where
+    depth3 = totalDepth option3 depth -- Length of preceding statements
+    depth2 = totalDepth option2 (depth - depth3) -- Length of catch statements
+    depth1 = totalDepth option1 (depth - depth3 - depth2) -- Length of try statements
 _totalDepth linpath@LinearPath {} depth = totalDepth linpath depth -- If this function was called directly, this will send a linear path back to the wrapper
 
 -- Utility function that can check the depth of a Maybe Stmt (0 if none is present, n if there is a Stmt)

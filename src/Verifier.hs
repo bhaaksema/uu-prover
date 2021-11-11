@@ -50,20 +50,33 @@ printIfException :: ExceptionCode -> IO ()
 printIfException 0 = return ()
 printIfException i = putStrLn $ "Unhandled exception: " ++ exceptionCodeToString i
 
+renameSpecials :: Program -> Program
+renameSpecials (Program name inputs outputs stmts) = Program name (declRename inputs) (declRename outputs) (renameSpecials' stmts)
+  where
+    declRename = map (\(VarDeclaration name t) -> if name == "exc" then VarDeclaration "exc'" t else VarDeclaration name t)
+
+    renameSpecials' (Seq stmt1 stmt2) = Seq (renameSpecials' stmt1) (renameSpecials' stmt2)
+    renameSpecials' (While guard stmt) = While guard (renameSpecials' stmt)
+    renameSpecials' (IfThenElse guard stmt1 stmt2) = IfThenElse guard (renameSpecials' stmt1) (renameSpecials' stmt2)
+    renameSpecials' (Block vars stmt) = Block (declRename vars) stmt
+    renameSpecials' (TryCatch "exc" tryBlock catchBlock) = renameSpecials' (TryCatch "exc'" tryBlock catchBlock)
+    renameSpecials' (TryCatch ename tryBlock catchBlock) = TryCatch ename (renameSpecials' tryBlock) (renameSpecials' catchBlock)
+    renameSpecials' s = s
+
 -- Main funtion that verifies the program
 verifyProgram :: Either a Program -> (Int, [Char], Bool, Bool) -> IO Result
 verifyProgram (Left _) _ = do
   putStrLn "unable to parse program"
   return Undef
-verifyProgram (Right program) (k, file, printWlp, printPath) = do
+verifyProgram (Right program') (k, file, printWlp, printPath) = do
   putStrLn ("verifying " ++ file ++ " for K = " ++ show k)
   putStrLn []
 
   -- Start computation time counter
   start <- getCPUTime
-  let path = constructPath program
+  let program = renameSpecials program'
   let locVars = findLocvars (stmt program)
-  let (clearedPath, branches) = removePaths path k
+  let (clearedPath, branches) = removePaths k . constructPath $ program
 
   -- Create a map with all the variables and an initial value of (Var name)
   let (vars', varTypes') = foldl addExprVariable (empty, empty) (input program ++ output program ++ locVars)

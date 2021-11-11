@@ -8,15 +8,15 @@ import qualified Data.Map (map)
 import Data.Maybe (catMaybes, fromMaybe)
 import GCLParser.GCLDatatype
 import ProgramPath (ProgramPath (..), combinePaths, unrollSeq)
-import WLP (PostCondition, considerExpr, evalExpr, simplifyExpr, traceVarExpr, wlp)
+import WLP (PostConditions, considerExpr, evalExpr, simplifyExpr, traceVarExpr, wlp)
 import Z3.Monad
 
-evaluateFullTree :: ProgramPath Expr -> PostCondition -> [(Map String Expr -> (Expr, Map String Expr), [Stmt])]
-evaluateFullTree treepath@(TreePath cond stmts option1 option2) postCond
+evaluateFullTree :: ProgramPath Expr -> PostConditions -> [(Map String Expr -> (Expr, Map String Expr), [Stmt])]
+evaluateFullTree treepath@(TreePath cond stmts option1 option2) postConds@(postCond, errorCond)
   | cond == LitB False = []
   | otherwise = do
-    let expr1 = evaluateFullTree option1 postCond
-    let expr2 = evaluateFullTree option2 postCond
+    let expr1 = evaluateFullTree option1 postConds
+    let expr2 = evaluateFullTree option2 postConds
     -- Calculates the wlp over branch node statements
     -- If it has statements, runs wlp using the precondition of expr1, else just returns that precondition
     let wlps1 = map concatPaths expr1
@@ -25,10 +25,10 @@ evaluateFullTree treepath@(TreePath cond stmts option1 option2) postCond
   where
     myPath = maybe [] unrollSeq stmts
     myStmts = maybe Skip (Seq (Assume cond)) stmts
-    concatPaths (wlpAndVars, path) = (wlp myStmts wlpAndVars, myPath ++ path)
-evaluateFullTree whilepath@(AnnotedWhilePath invar guard whilePath nextPath) postCond = do
-  let wlpsOverS = evaluateFullTree whilePath (\vars -> (considerExpr invar vars, vars))
-  let qs = evaluateFullTree nextPath postCond
+    concatPaths (wlpAndVars, path) = (wlp myStmts (wlpAndVars, errorCond), myPath ++ path)
+evaluateFullTree whilepath@(AnnotedWhilePath invar guard whilePath nextPath) (postCond, errorCond) = do
+  let wlpsOverS = evaluateFullTree whilePath (\vars -> (considerExpr invar vars, vars), errorCond)
+  let qs = evaluateFullTree nextPath (postCond, errorCond)
 
   -- Create all possible combinations of the inner while path and the next path.
   -- Note that all possible combinations need to be checked, as we don't know in advance whether there is an unannoted while within this while.
@@ -62,14 +62,26 @@ evaluateFullTree whilepath@(AnnotedWhilePath invar guard whilePath nextPath) pos
     freshenModifiedVars [] vars = vars
     freshenModifiedVars (Assign name _ : stmts) vars = insert name (Var name) (freshenModifiedVars stmts vars)
     freshenModifiedVars (_ : stmts) vars = freshenModifiedVars stmts vars
-evaluateFullTree linpath@(LinearPath cond stmts) postCond
+evaluateFullTree whilepath@(TryCatchPath tryPath eName catchPath nextPath) (postCond, errorCond) = do
+  let qs = evaluateFullTree nextPath (postCond, errorCond)
+  -- All combinations of catchPaths and nextPaths
+  let catchWlps' = [map (\(catchWlp, catchPath) -> (catchWlp, q, catchPath ++ nextPath)) $ evaluateFullTree catchPath (q, errorCond) | (q, nextPath) <- qs]
+  let catchWlps = concat catchWlps'
+
+  -- All combinations of tryPaths and handeling paths
+  let tryWlps' = [map (\(tryWlp, tryPath) -> (tryWlp, tryPath ++ postPath)) $ evaluateFullTree tryPath (q, resetExc catchWlp) | (catchWlp, q, postPath) <- catchWlps]
+  let tryWlps = concat tryWlps'
+  tryWlps
+  where
+    resetExc wlp = \vars -> (wlp . insert "exc" (LitI 0) . insert eName (vars ! "exc")) vars --Stores the exc code in the eName variable as defined in the catch, and resets exc to 0
+evaluateFullTree linpath@(LinearPath cond stmts) postConds
   | cond == LitB False = []
   | otherwise = do
-    let path = wlp stmts postCond -- Postcondition is: exception must be code 0 (no exception)
+    let path = wlp stmts postConds -- Postcondition is: exception must be code 0 (no exception)
     let condExpr = considerExpr cond
     [(\vars -> (simplifyExpr (BinopExpr Implication (condExpr vars) (fst (path vars))), snd (path vars)), unrollSeq stmts)]
-evaluateFullTree (EmptyPath cond) postCond = [(\vars -> (cond, vars), [])]
-evaluateFullTree InvalidPath postCond = [] --Ignore invalid path
+evaluateFullTree (EmptyPath cond) postConds = [(\vars -> (cond, vars), [])]
+evaluateFullTree InvalidPath _ = [] --Ignore invalid path
 
 evaluateTreeConds :: ProgramPath Expr -> Map String Expr -> Map String (Z3 AST) -> IO (ProgramPath Expr)
 evaluateTreeConds (TreePath cond stmts option1 option2) vars varmap = do
@@ -83,6 +95,7 @@ evaluateTreeConds (TreePath cond stmts option1 option2) vars varmap = do
       newTree2 <- evaluateTreeConds option2 newVars varmap
       return (TreePath condExpr stmts newTree1 newTree2)
 evaluateTreeConds path@(AnnotedWhilePath invar guard whilePath nextPath) vars varmap = return path -- Note that no path can be evaluated anymore now! There could be many possibilities of variables changing inside of the whilePath if it has a tree inside it.
+evaluateTreeConds path@TryCatchPath {} vars varmap = return path -- Note that no path can be evaluated anymore now! There could be many possibilities of variables changing inside of the tryPath if it has an error inside it.
 evaluateTreeConds linpath@(LinearPath cond stmts) vars varmap = do
   let evaluatedCond = considerExpr cond vars
   condExpr <- z3Satisfiable evaluatedCond varmap
@@ -98,7 +111,7 @@ calcWLP :: ProgramPath Expr -> Map String Expr -> [((Expr, Map String Expr), [St
 calcWLP tree vars = do
   let postCondition = BinopExpr Equal (Var "exc") (LitI 0) -- Postcondition is: there was no error
   let wlpPostCondition = \vars -> (considerExpr postCondition vars, vars) -- Postcondition formualted as a function that the wlp function is able to handle
-  let wlpsAndTrees = evaluateFullTree tree wlpPostCondition
+  let wlpsAndTrees = evaluateFullTree tree (wlpPostCondition, wlpPostCondition)
   map (\(exprAndVars, path) -> (simplify $ exprAndVars vars, path)) wlpsAndTrees
   where
     simplify (expr, vars) = (simplifyExpr expr, vars)
