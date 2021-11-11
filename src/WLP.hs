@@ -32,9 +32,9 @@ safeExpression (BinopExpr binop expr1 expr2) q vars = do
   (BinopExpr binop expr1 expr2, e2Vars)
 safeExpression (OpNeg expr) q vars = first OpNeg $ safeExpression expr q vars
 safeExpression (Var name) q vars = (vars ! name, vars)
-safeExpression (ArrayElem (Var name) index) q vars = (ArrayElem (vars ! name) (considerExpr index vars), vars)
+safeExpression (ArrayElem (Var name) index) q vars = (ArrayElem (vars ! name) safeIndex, newVars)
   where
-    (_, newVars) = safeExpression index q vars
+    (safeIndex, newVars) = safeExpression index q vars
     lowerBound = BinopExpr LessThan index (LitI 0)
     upperBound = BinopExpr GreaterThanEqual index (Var $ "#" ++ name)
     indexUnsafe = BinopExpr Or lowerBound upperBound
@@ -75,8 +75,8 @@ wlp (Assign name expr) (q, r) vars = do
 wlp (AAssign name indexE expr) (q, r) vars = do
   let array = vars ! name
   let (value, safeVars) = safeExpression (considerExpr expr vars) q vars
-  let index = considerExpr indexE vars
-  let newVars' = insert name (RepBy array index value) safeVars
+  let (index, saferVars) = safeExpression (considerExpr indexE safeVars) q safeVars
+  let newVars' = insert name (RepBy array index value) saferVars
   let lowerBound = BinopExpr LessThan index (LitI 0)
   let upperBound = BinopExpr GreaterThanEqual index (Var $ "#" ++ name)
   let newVars = updateExc (BinopExpr Or lowerBound upperBound) (LitI 2) newVars'

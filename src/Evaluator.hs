@@ -77,9 +77,9 @@ evaluateFullTree whilepath@(TryCatchPath tryPath eName catchPath nextPath) (post
 evaluateFullTree linpath@(LinearPath cond stmts) postConds
   | cond == LitB False = []
   | otherwise = do
-    let path = wlp stmts postConds -- Postcondition is: exception must be code 0 (no exception)
+    let path = wlp (Seq (Assume cond) stmts) postConds -- Postcondition is: exception must be code 0 (no exception)
     let condExpr = considerExpr cond
-    [(\vars -> (simplifyExpr (BinopExpr Implication (condExpr vars) (fst (path vars))), snd (path vars)), unrollSeq stmts)]
+    [(path, unrollSeq stmts)]
 evaluateFullTree (EmptyPath cond) postConds = [(\vars -> (cond, vars), [])]
 evaluateFullTree InvalidPath _ = [] --Ignore invalid path
 
@@ -93,17 +93,22 @@ evaluateTreeConds (TreePath cond stmts option1 option2) vars varmap = do
     _ -> do
       newTree1 <- evaluateTreeConds option1 newVars varmap
       newTree2 <- evaluateTreeConds option2 newVars varmap
-      return (TreePath condExpr stmts newTree1 newTree2)
+      return (TreePath cond stmts newTree1 newTree2)
 evaluateTreeConds path@(AnnotedWhilePath invar guard whilePath nextPath) vars varmap = return path -- Note that no path can be evaluated anymore now! There could be many possibilities of variables changing inside of the whilePath if it has a tree inside it.
 evaluateTreeConds path@TryCatchPath {} vars varmap = return path -- Note that no path can be evaluated anymore now! There could be many possibilities of variables changing inside of the tryPath if it has an error inside it.
 evaluateTreeConds linpath@(LinearPath cond stmts) vars varmap = do
   let evaluatedCond = considerExpr cond vars
   condExpr <- z3Satisfiable evaluatedCond varmap
-  return $ LinearPath condExpr stmts
+  case condExpr of
+    LitB False -> return $ LinearPath condExpr stmts
+    _ -> return $ LinearPath cond stmts
 evaluateTreeConds (EmptyPath cond) vars varmap = do
   let evaluatedCond = considerExpr cond vars
   condExpr <- z3Satisfiable evaluatedCond varmap
-  return $ EmptyPath condExpr
+  condExpr <- z3Satisfiable evaluatedCond varmap
+  case condExpr of
+    LitB False -> return $ EmptyPath condExpr
+    _ -> return $ EmptyPath cond
 evaluateTreeConds InvalidPath _ _ = return InvalidPath
 
 -- Calculates the WLP over a program path

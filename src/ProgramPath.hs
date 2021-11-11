@@ -136,6 +136,7 @@ combinePaths (TreePath cond tStmts option1 option2) treepath@TreePath {} = TreeP
 combinePaths (AnnotedWhilePath invar guard whilePath nextPath) otherPath = AnnotedWhilePath invar guard whilePath (combinePaths nextPath otherPath)
 combinePaths (EmptyPath cond) otherPath = injectExpression cond otherPath
 combinePaths otherPath empty@(EmptyPath cond) = combinePaths empty otherPath
+combinePaths (TryCatchPath tryPath eName catchPath nextPath) otherPath = TryCatchPath tryPath eName catchPath (combinePaths nextPath otherPath)
 combinePaths _ _ = InvalidPath
 
 --
