@@ -15,6 +15,12 @@ data ProgramPath a
       { condition :: a,
         lStmts :: Stmt
       }
+  | AnnotedWhilePath
+      { invariant :: a,
+        guard :: a,
+        innerPath :: ProgramPath a,
+        nextPath :: ProgramPath a
+      }
   | EmptyPath a -- Path that does not yet contain any statements or branches
   | InvalidPath --  Either because branch condition was unfeasible or because depth was too deep
   deriving (Show)
@@ -41,9 +47,27 @@ _constructPath ((While expr stmt) : stmts) = tree
     stmtTree = _constructPath $ listify stmt -- Construct a path of the inner statement. This is required because there may be nested special environments.
     skipWhile = injectExpression (OpNeg expr) (_constructPath stmts)
     runs = combinePaths stmtTree (TreePath expr Nothing skipWhile runs) -- Construct paths for when the while runs
+_constructPath (Assert invar : w@(While expr stmt) : stmts) = tree -- A loop with an invariant was found
+  where
+    tree = TreePath (LitB True) Nothing whilePath InvalidPath
+    -- Unroll everything in the while block, needed if there are special instructions (if-then-else, nested while) inside of this wile
+    whilePath = AnnotedWhilePath invar expr (_constructPath $ listify stmt) (_constructPath stmts)
 _constructPath ((Block vars stmt) : stmts) = error $ "Found unfiltered block! \r\n" ++ show stmt -- Block should be filtered out during splitList
 _constructPath (stmt : stmts) = combinePaths (LinearPath (LitB True) stmt) $ _constructPath stmts
 _constructPath [] = EmptyPath (LitB True)
+
+-- Construct paths that will be evaluated when exc is not 0.
+-- They can be used to find what kind of error was produced, as they explicitly set the corresponding exception code.
+-- Note that they add an Assert False, thus they don't further evaluate the noErrorPath and are a form of early stopping when there is an exception.
+errorCheckingPath :: ProgramPath Expr -> ProgramPath Expr
+errorCheckingPath noErrorPath = TreePath (LitB True) Nothing (injectExpression testNoException noErrorPath) t1
+  where
+    assignPath x = LinearPath (BinopExpr Equal (Var "exc") (LitI x)) (Assign "exc" (LitI x))
+    unknownException = LinearPath (LitB True) (Assign "exc" (LitI (-1))) -- This path will only be taken if exc is not 0, and not one of the already defined numbers
+    testNoException = BinopExpr Equal (Var "exc") (LitI 0)
+    t1 = TreePath (OpNeg testNoException) Nothing (assignPath 1) t2
+    t2 = TreePath (LitB True) Nothing (assignPath 2) t3
+    t3 = TreePath (LitB True) Nothing (assignPath 3) unknownException
 
 -- Turns seq into a list of statements
 unrollSeq :: Stmt -> [Stmt]
@@ -65,6 +89,7 @@ splitList' :: [Stmt] -> [Stmt] -> [Stmt]
 splitList' [] [] = []
 splitList' [] stmts = rollSeqr stmts
 splitList' (w@While {} : statements) stmts = rollSeqr stmts ++ (w : splitList statements)
+splitList' (Assert e : w@While {} : statements) stmts = rollSeqr stmts ++ [Assert e] ++ (w : splitList statements) -- Loop invariant found
 splitList' (w@IfThenElse {} : statements) stmts = rollSeqr stmts ++ (w : splitList statements)
 splitList' ((Block _ stmt) : statements) stmts = splitList' (listify stmt ++ statements) stmts -- Take code out of the block, and process as its own entity
 splitList' (s : statements) stmts = splitList' statements (s : stmts)
@@ -85,21 +110,19 @@ injectExpression :: Expr -> ProgramPath Expr -> ProgramPath Expr
 injectExpression expr (LinearPath cond stmts) = LinearPath (BinopExpr And cond expr) stmts
 injectExpression expr (TreePath cond stmts option1 option2) = TreePath (BinopExpr And cond expr) stmts option1 option2
 injectExpression expr (EmptyPath cond) = EmptyPath (BinopExpr And cond expr)
+injectExpression _ AnnotedWhilePath {} = error "Cannot inject expression into while block"
 injectExpression _ InvalidPath = InvalidPath
 
 -- Utility function that can combine two ProgramPaths into a single ProgramPath
 combinePaths :: ProgramPath Expr -> ProgramPath Expr -> ProgramPath Expr
-combinePaths (LinearPath condA stmtA) (LinearPath condB stmtB) = LinearPath (simplifyExpr (BinopExpr And condA condB)) (combineStatements stmtA stmtB)
-combinePaths (LinearPath condA lin) (TreePath condB tStmts option1 option2) = TreePath (simplifyExpr (BinopExpr And condA condB)) newStmts option1 option2 where newStmts = maybe (Just lin) (Just . combineStatements lin) tStmts
+combinePaths (LinearPath condA stmtA) (LinearPath condB stmtB) = LinearPath (simplifyExpr (BinopExpr And condA condB)) (Seq stmtA stmtB)
+combinePaths (LinearPath condA lin) (TreePath condB tStmts option1 option2) = TreePath (simplifyExpr (BinopExpr And condA condB)) newStmts option1 option2 where newStmts = maybe (Just lin) (Just . Seq lin) tStmts
 combinePaths (TreePath cond tStmts option1 option2) linpath@LinearPath {} = TreePath cond tStmts (combinePaths option1 linpath) (combinePaths option2 linpath)
 combinePaths (TreePath cond tStmts option1 option2) treepath@TreePath {} = TreePath cond tStmts (combinePaths option1 treepath) (combinePaths option2 treepath)
+combinePaths (AnnotedWhilePath invar guard whilePath nextPath) otherPath = AnnotedWhilePath invar guard whilePath (combinePaths nextPath otherPath)
 combinePaths (EmptyPath cond) otherPath = injectExpression cond otherPath
 combinePaths otherPath empty@(EmptyPath cond) = combinePaths empty otherPath
 combinePaths _ _ = InvalidPath
-
-combineStatements :: Stmt -> Stmt -> Stmt
-combineStatements (Seq a b) c = Seq a (combineStatements b c)
-combineStatements s1 s2 = Seq s1 s2
 
 --
 -- SECTION 2
@@ -129,69 +152,20 @@ _removePaths (TreePath cond tStmts pathA pathB) depth
     pruneInvalidBranch tree@(TreePath _ _ _ InvalidPath) = (tree, newACount)
     pruneInvalidBranch tree@(TreePath _ _ InvalidPath _) = (tree, newBCount)
     pruneInvalidBranch tree = (tree, newACount + newBCount)
+_removePaths (AnnotedWhilePath invar guard whilePath postPath) depth = pruneInvalidWhile (AnnotedWhilePath invar guard newA newB) -- Evaluate both paths. If any turn out to be unfeasible this node is pruned as well
+  where
+    (newA, newACount) = removePaths whilePath (depth - bDepth) -- Evaluate path A, see if it is feasible given the depth
+    (newB, newBCount) = removePaths postPath depth -- Evaluate path B, see if it is feasible given the depth
+    bDepth = totalDepth newB depth
+    pruneInvalidWhile (AnnotedWhilePath _ _ InvalidPath _) = (InvalidPath, 0)
+    pruneInvalidWhile (AnnotedWhilePath _ _ _ InvalidPath) = (InvalidPath, 0)
+    --
+    pruneInvalidWhile while = (while, newACount * newBCount)
 _removePaths linpath@LinearPath {} depth
   | depth < totalDepth linpath depth = (InvalidPath, 0) -- Make path unfeasible if it exceeds the depth
   | otherwise = (linpath, 1)
 _removePaths InvalidPath _ = (InvalidPath, 0)
 _removePaths (EmptyPath _) _ = (InvalidPath, 0) -- Invalidate empty paths
-
--- Wrapper for actual function, so it wont keep evaluating the infinite structure
-flagInvalid :: ProgramPath Expr -> Int -> ProgramPath Expr
-flagInvalid tree depth
-  | depth <= 0 = InvalidPath
-  | otherwise = _flagInvalid tree depth
-
-_flagInvalid :: ProgramPath Expr -> Int -> ProgramPath Expr
-_flagInvalid (TreePath cond tStmts pathA pathB) depth
-  | remDepth < 0 = InvalidPath -- Invalidate branch node if its statements are longer than the allowed depth
-  | otherwise = TreePath cond tStmts (flagInvalid pathA remDepth) (flagInvalid pathB remDepth)
-  where
-    baseDepth = splitDepth tStmts depth -- How many statements happen before the branch
-    remDepth = depth - baseDepth -- The depth remaining after the preceding statements
-_flagInvalid linpath@LinearPath {} depth
-  | depth < totalDepth linpath depth = InvalidPath -- Make path unfeasible if it exceeds the depth
-  | otherwise = linpath
-_flagInvalid InvalidPath _ = InvalidPath
-_flagInvalid (EmptyPath _) _ = InvalidPath -- Invalidate empty paths
-
---
--- SECTION 3
---
--- These function define basic operations over the tree structure.
--- These functions are map and fold
---
-
--- Folds the tree on the condition field
-foldTreeCond :: (cond -> result -> result) -> result -> (result -> result) -> ProgramPath cond -> result
-foldTreeCond _ init invalid InvalidPath = invalid init
-foldTreeCond condFunc initial _ (EmptyPath cond) = condFunc cond initial
-foldTreeCond condFunc initial _ (LinearPath cond _) = condFunc cond initial
-foldTreeCond f init inv (TreePath cond _ option1 option2) = fold
-  where
-    fold = foldTreeCond f middle inv option2
-    middle = f cond first
-    first = foldTreeCond f init inv option1
-
--- Folds the tree on the statement field
-foldTreeStmt :: (Stmt -> result -> result) -> result -> (result -> result) -> ProgramPath a -> result
-foldTreeStmt _ init invalid InvalidPath = invalid init
-foldTreeStmt stmtFunc init invalid (EmptyPath _) = invalid init
-foldTreeStmt stmtFunc initial _ (LinearPath _ stmt) = stmtFunc stmt initial
-foldTreeStmt f init inv (TreePath _ stmt option1 option2) = fullfold
-  where
-    fullfold = foldTreeStmt f middle inv option2
-    middle = fromMaybe first middleFolded -- If stmt was Nothing, this returns first, else it returns foldTree over stmt with initial value first
-    middleFolded = (`f` first) <$> stmt
-    first = foldTreeStmt f init inv option1
-
-mapTree :: (t -> a) -> (Stmt -> Stmt) -> ProgramPath t -> ProgramPath a
-mapTree _ _ InvalidPath = InvalidPath
-mapTree condFunc _ (EmptyPath cond) = EmptyPath (condFunc cond)
-mapTree condFunc stmtFunc (LinearPath cond stmt) = LinearPath (condFunc cond) (stmtFunc stmt)
-mapTree condFunc stmtFunc (TreePath cond stmt option1 option2) = TreePath (condFunc cond) (stmtFunc <$> stmt) (mapTree' option1) (mapTree' option2)
-  where
-    mapTree' = mapTree condFunc stmtFunc
-
 --
 -- SECTION 4
 --
@@ -200,6 +174,7 @@ mapTree condFunc stmtFunc (TreePath cond stmt option1 option2) = TreePath (condF
 
 countBranches :: Num p => ProgramPath a -> p
 countBranches (TreePath _ _ option1 option2) = countBranches option1 + countBranches option2
+countBranches (AnnotedWhilePath _ _ option1 option2) = countBranches option1 * countBranches option2
 countBranches InvalidPath = 0
 countBranches (EmptyPath _) = 0
 countBranches LinearPath {} = 1
@@ -215,6 +190,7 @@ numConditionFalse :: Num p => ProgramPath Expr -> p
 numConditionFalse t@(TreePath cond _ option1 option2)
   | cond == LitB False = countBranches t
   | otherwise = numConditionFalse option1 + numConditionFalse option2
+numConditionFalse t@(AnnotedWhilePath _ _ option1 option2) = numConditionFalse option1 * numConditionFalse option2
 numConditionFalse InvalidPath = 0
 numConditionFalse (EmptyPath _) = 0
 numConditionFalse (LinearPath cond _) = if cond == LitB False then 1 else 0
@@ -223,6 +199,7 @@ numConditionFalse (LinearPath cond _) = if cond == LitB False then 1 else 0
 countStatements :: Num p => Stmt -> p
 countStatements (Seq a b) = countStatements a + countStatements b
 countStatements (Block _ stmts) = countStatements stmts
+countStatements (While _ stmts) = countStatements stmts
 countStatements _ = 1
 
 -- Print the whole tree for the given program path
@@ -242,8 +219,30 @@ __printTree (LinearPath cond a) depth k = "[" ++ show cond ++ "]" ++ show a
   where
     aDepth = totalDepth (LinearPath cond a) depth
     remDepth = depth - aDepth
+__printTree (AnnotedWhilePath invar guard option1 option2) depth k =
+  tabs
+    ++ "INVAR "
+    ++ show invar
+    ++ " WHILE "
+    ++ show guard
+    ++ " { "
+    ++ "\n"
+    ++ tabs
+    ++ _printTree option1 remDepth k
+    ++ "\n"
+    ++ tabs
+    ++ "}"
+    ++ _printTree option2 depth k
+  where
+    baseDepth = totalDepth option2 depth
+    remDepth = depth - baseDepth
+    tabs = replicate (2 * (k - depth)) ' ' -- Tabs for same level
 __printTree (TreePath cond tStmts option1 option2) depth k =
   tabs
+    ++ "[ "
+    ++ show cond
+    ++ "]\n"
+    ++ tabs
     ++ show tStmts
     ++ "\n"
     ++ tabs
@@ -274,6 +273,10 @@ _totalDepth (EmptyPath _) depth = 0 -- Empty path has no depth
 _totalDepth (TreePath _ tStmts option1 option2) depth = baseDepth + max (totalDepth option1 remDepth) (totalDepth option2 remDepth) --Length of a branching path is length of preceding statements + max(length branch 1, length branch 2)
   where
     baseDepth = splitDepth tStmts depth -- Length of preceding statements
+    remDepth = depth - baseDepth -- Depth remaining to explore after the preceding statements
+_totalDepth (AnnotedWhilePath _ _ option1 option2) depth = baseDepth + totalDepth option1 remDepth --Length of a branching path is length of preceding statements + max(length branch 1, length branch 2)
+  where
+    baseDepth = totalDepth option2 depth -- Length of preceding statements
     remDepth = depth - baseDepth -- Depth remaining to explore after the preceding statements
 _totalDepth linpath@LinearPath {} depth = totalDepth linpath depth -- If this function was called directly, this will send a linear path back to the wrapper
 

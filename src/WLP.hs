@@ -1,12 +1,17 @@
 module WLP where
 
+import Data.Bifunctor (Bifunctor (first))
 import Data.Map (Map, adjust, empty, fromList, insert, member, toList, (!))
 import GCLParser.GCLDatatype
 import Z3.Monad
 
-wlp :: Stmt -> (Map String Expr -> Expr) -> Map String Expr -> Expr
-wlp (Assert expr) q vars = BinopExpr And (considerExpr expr vars) (q vars)
-wlp (Assume expr) q vars = BinopExpr Implication (Parens (considerExpr expr vars)) (Parens (q vars))
+type WLPType = Map String Expr -> (Expr, Map String Expr)
+
+type PostCondition = WLPType
+
+wlp :: Stmt -> PostCondition -> WLPType
+wlp (Assert expr) q vars = first (BinopExpr And (considerExpr expr vars)) (q vars)
+wlp (Assume expr) q vars = first (BinopExpr Implication (Parens (considerExpr expr vars)) . Parens) (q vars)
 wlp Skip q vars = q vars
 wlp (Seq stmt1 stmt2) q vars = do
   let stmt2Q = wlp stmt2 q
@@ -17,7 +22,8 @@ wlp (Assign name expr) q vars = do
   let isArray = member ("#" ++ name) vars
   let basicUpdate = insert name value vars -- Update the value of this variable to the expression
   let qIfPrimitive = q basicUpdate --If this is a primitive, evaluate q using the basic map
-  let qIfArray = q (insert ("#" ++ name) (vars ! ("#" ++ getArrayName expr)) basicUpdate) --If this is an array, also update the array length of this variable. Then evaluate q using the new map.
+  let arrayLengthUpdate = insert ("#" ++ name) (vars ! ("#" ++ getArrayName expr)) basicUpdate
+  let qIfArray = q arrayLengthUpdate --If this is an array, also update the array length of this variable. Then evaluate q using the new map.
   if isArray then qIfArray else qIfPrimitive
   where
     getArrayName (Var name) = name -- Get name of the variable
@@ -27,7 +33,8 @@ wlp (AAssign name indexE expr) q vars = do
   let array = vars ! name
   let value = considerExpr expr vars
   let index = considerExpr indexE vars
-  q (insert name (RepBy array index value) vars)
+  let newVars = insert name (RepBy array index value) vars
+  q newVars
 wlp s _ _ = error ("Unknown statement '" ++ show s ++ "'")
 
 -- Returns a list of all variables declared in the program
@@ -150,6 +157,13 @@ evalExpr' (Exists locvarName expr) vars = do
   quantifier' <- toApp q
   let boundedVars = insert locvarName quantifier vars
   mkExistsConst [] [quantifier'] =<< evalExpr' expr boundedVars
+-- This is a special construct that allows for making a value dependent on a condition. This allows for e.g. exc := IF a == b THEN 0 ELSE 5.
+-- This is used especially for the finding the final values of variables.
+evalExpr' (NewStore (RepBy condition trueValue falseValue)) vars = do
+  ifTrue <- evalExpr trueValue vars
+  ifFalse <- evalExpr falseValue vars
+  condition <- evalExpr condition vars
+  mkIte condition ifTrue ifFalse
 evalExpr' e _ = error ("Unknown z3 expression '" ++ show e ++ "'")
 
 evalBinopExpr :: Expr -> Expr
