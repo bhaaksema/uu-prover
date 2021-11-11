@@ -11,11 +11,49 @@ type PostCondition = WLPType
 
 type PostConditions = (WLPType, WLPType)
 
+changeIf :: Expr -> Expr -> Expr -> Expr
 changeIf cond trueValue falseValue = NewStore (RepBy cond trueValue falseValue)
 
+updateExc cond trueValue vars = insert "exc" (changeIf (BinopExpr And cond excZero) trueValue (vars ! "exc")) vars
+  where
+    excZero = BinopExpr Equal (vars ! "exc") (LitI 0)
+
+safeExpression :: Expr -> PostCondition -> Map String Expr -> (Expr, Map String Expr)
+safeExpression i@(LitI _) q vars = (i, vars)
+safeExpression b@(LitB _) q vars = (b, vars)
+safeExpression (BinopExpr Divide expr1 expr2) q vars = do
+  let (e1, e1Vars) = safeExpression expr1 q vars
+  let (e2, e2Vars) = safeExpression expr2 q e1Vars
+  let newVars = updateExc (BinopExpr Equal e2 (LitI 0)) (LitI 1) e2Vars
+  (BinopExpr Divide expr1 expr2, newVars)
+safeExpression (BinopExpr binop expr1 expr2) q vars = do
+  let (e1, e1Vars) = safeExpression expr1 q vars
+  let (e2, e2Vars) = safeExpression expr2 q e1Vars
+  (BinopExpr binop expr1 expr2, e2Vars)
+safeExpression (OpNeg expr) q vars = first OpNeg $ safeExpression expr q vars
+safeExpression (Var name) q vars = (vars ! name, vars)
+safeExpression (ArrayElem (Var name) index) q vars = (ArrayElem (vars ! name) (considerExpr index vars), vars)
+  where
+    (_, newVars) = safeExpression index q vars
+    lowerBound = BinopExpr LessThan index (LitI 0)
+    upperBound = BinopExpr GreaterThanEqual index (Var $ "#" ++ name)
+    indexUnsafe = BinopExpr Or lowerBound upperBound
+    newVars' = updateExc indexUnsafe (LitI 2) newVars
+safeExpression a@(ArrayElem (RepBy e _ _) index) q vars = first (const a) $ safeExpression (ArrayElem e index) q vars -- Evaluate as if there isn't a RepBy, then put it in the first element of the tuple (gives the correct var values)
+safeExpression (Parens e) q vars = safeExpression e q vars
+safeExpression (SizeOf (Var name)) q vars = (vars ! ("#" ++ name), vars)
+safeExpression (Forall locvarName expr) q vars = first (Forall locvarName) $ safeExpression expr q vars
+safeExpression (Exists locvarName expr) q vars = first (Exists locvarName) $ safeExpression expr q vars
+safeExpression e@NewStore {} q vars = (e, vars) -- This is a wrapper for an if-then-else, thus we just pass the value along
+safeExpression e _ _ = error ("Cannot determinte if expression would result in exception: '" ++ show e ++ "'")
+
 wlp :: Stmt -> PostConditions -> WLPType
-wlp (Assert expr) (q, r) vars = first (BinopExpr And (considerExpr expr vars)) (q vars)
-wlp (Assume expr) (q, r) vars = first (BinopExpr Implication (Parens (considerExpr expr vars)) . Parens) (q vars)
+wlp (Assert expr) (q, r) vars = first (BinopExpr And safe) (q safeVars)
+  where
+    (safe, safeVars) = safeExpression (considerExpr expr vars) q vars
+wlp (Assume expr) (q, r) vars = first (BinopExpr Implication (Parens safe) . Parens) (q safeVars)
+  where
+    (safe, safeVars) = safeExpression (considerExpr expr vars) q vars
 wlp Skip (q, r) vars = q vars
 wlp (Seq stmt1 stmt2) (q, r) vars = do
   let stmt2Q = wlp stmt2 (q, r)
@@ -23,11 +61,11 @@ wlp (Seq stmt1 stmt2) (q, r) vars = do
   stmt1Q vars
 wlp (Assign name expr) (q, r) vars = do
   let q' = if name == "exc" then r else q
-  let value = considerExpr expr vars
+  let (value, safeVars) = safeExpression (considerExpr expr vars) q vars
   let isArray = member ("#" ++ name) vars
-  let basicUpdate = insert name value vars -- Update the value of this variable to the expression
+  let basicUpdate = insert name value safeVars -- Update the value of this variable to the expression
   let qIfPrimitive = q' basicUpdate --If this is a primitive, evaluate q using the basic map
-  let arrayLengthUpdate = insert ("#" ++ name) (vars ! ("#" ++ getArrayName expr)) basicUpdate
+  let arrayLengthUpdate = insert ("#" ++ name) (safeVars ! ("#" ++ getArrayName expr)) basicUpdate
   let qIfArray = q' arrayLengthUpdate --If this is an array, also update the array length of this variable. Then evaluate q using the new map.
   if isArray then qIfArray else qIfPrimitive
   where
@@ -36,12 +74,12 @@ wlp (Assign name expr) (q, r) vars = do
     getArrayName expr = error "Trying to get array name from variable that is not an array: " ++ show expr
 wlp (AAssign name indexE expr) (q, r) vars = do
   let array = vars ! name
-  let value = considerExpr expr vars
+  let (value, safeVars) = safeExpression (considerExpr expr vars) q vars
   let index = considerExpr indexE vars
-  let newVars' = insert name (RepBy array index value) vars
+  let newVars' = insert name (RepBy array index value) safeVars
   let lowerBound = BinopExpr LessThan index (LitI 0)
   let upperBound = BinopExpr GreaterThanEqual index (Var $ "#" ++ name)
-  let newVars = insert "exc" (changeIf (BinopExpr Or lowerBound upperBound) (LitI 2) (newVars' ! "exc")) newVars'
+  let newVars = updateExc (BinopExpr Or lowerBound upperBound) (LitI 2) newVars'
   q newVars
 wlp s _ _ = error ("Unknown statement '" ++ show s ++ "'")
 
