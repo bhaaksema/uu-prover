@@ -2,6 +2,7 @@ module ProgramPath where
 
 import Data.Maybe (fromMaybe)
 import GCLParser.GCLDatatype (BinOp (..), Expr (..), Program (..), Stmt (..))
+import GeneralTypes
 import WLP (simplifyExpr)
 
 data ProgramPath a
@@ -31,6 +32,8 @@ data ProgramPath a
   | InvalidPath --  Either because branch condition was unfeasible or because depth was too deep
   deriving (Show)
 
+type RemainingPathCount = Int
+
 --
 -- SECTION 1
 --
@@ -42,7 +45,7 @@ constructPath :: Program -> ProgramPath Expr
 constructPath program = _constructPath (listify $ stmt program)
 
 -- Function that will transform a statement into a ProgramPath
-_constructPath :: [Stmt] -> ProgramPath Expr
+_constructPath :: PathStatements -> ProgramPath Expr
 _constructPath ((IfThenElse expr ifStmt elseStmt) : stmts) = BranchPath (LitB True) Nothing (injectExpression expr ifPath) (injectExpression (OpNeg expr) elsePath)
   where
     ifPath = _constructPath $ listify ifStmt ++ stmts
@@ -82,22 +85,22 @@ errorCheckingPath noErrorPath = BranchPath (LitB True) Nothing (injectExpression
     t3 = BranchPath (LitB True) Nothing (assignPath 3) unknownException
 
 -- Turns seq into a list of statements
-unrollSeq :: Stmt -> [Stmt]
+unrollSeq :: Stmt -> PathStatements
 unrollSeq (Seq s1 s2) = unrollSeq s1 ++ unrollSeq s2
 unrollSeq s = [s]
 
 -- Turns statement into list of statements that are either: while, if, vardecl, pure seq, single statement
-listify :: Stmt -> [Stmt]
+listify :: Stmt -> PathStatements
 listify allStmts = splitList (unrollSeq allStmts)
 
 -- Turns a list of statements into a list of statements that are either: while, if, vardecl, pure seq, single statement
-splitList :: [Stmt] -> [Stmt]
+splitList :: PathStatements -> PathStatements
 splitList allStmts = splitList' allStmts []
 
 -- Turns a list of statements into a list of statements that are either: while, if, vardecl, pure seq, single statement
 -- First parameter is list of single statements, second parameter is accumulator: list of pure single statements that can finally be put into a list
 -- When the first non-pure statement is found, the accumulator will be rolled into a seq, added to the result list, then the unpure statement will be put in the list, then it will evaluate the other statements
-splitList' :: [Stmt] -> [Stmt] -> [Stmt]
+splitList' :: PathStatements -> PathStatements -> PathStatements
 splitList' [] [] = []
 splitList' [] stmts = rollSeqr stmts
 splitList' (w@While {} : statements) stmts = rollSeqr stmts ++ (w : splitList statements)
@@ -108,18 +111,18 @@ splitList' ((Block _ stmt) : statements) stmts = splitList' (listify stmt ++ sta
 splitList' (s : statements) stmts = splitList' statements (s : stmts)
 
 -- Rolls a list of statements into a Seq, where the begin of the Seq is on the right of the list
-rollSeqr :: [Stmt] -> [Stmt]
+rollSeqr :: PathStatements -> PathStatements
 rollSeqr [] = []
 rollSeqr stmts = [rollSeql $ reverse stmts]
 
 -- Rolls a list of statements into a Seq, where the begin of the Seq is on the left of the list
-rollSeql :: [Stmt] -> Stmt
+rollSeql :: PathStatements -> Stmt
 rollSeql [s] = s
 rollSeql (s : ss) = Seq s (rollSeql ss)
 rollSeql [] = error "Cannot roll empty array"
 
 -- Injects the given expression into the condition for the given path
-injectExpression :: Expr -> ProgramPath Expr -> ProgramPath Expr
+injectExpression :: Condition -> ProgramPath Expr -> ProgramPath Expr
 injectExpression expr (LinearPath cond stmts) = LinearPath (BinopExpr And cond expr) stmts
 injectExpression expr (BranchPath cond stmts option1 option2) = BranchPath (BinopExpr And cond expr) stmts option1 option2
 injectExpression expr (EmptyPath cond) = EmptyPath (BinopExpr And cond expr)
@@ -147,12 +150,12 @@ combinePaths _ _ = InvalidPath
 --
 
 --Wrapper for actual function, so it wont keep evaluating the infinite structure
-removePaths :: Int -> ProgramPath Expr -> (ProgramPath Expr, Int)
+removePaths :: Int -> ProgramPath Expr -> (ProgramPath Expr, RemainingPathCount)
 removePaths depth tree
   | depth <= 0 = (InvalidPath, 0)
   | otherwise = _removePaths tree depth
 
-_removePaths :: ProgramPath Expr -> Int -> (ProgramPath Expr, Int)
+_removePaths :: ProgramPath Expr -> Int -> (ProgramPath Expr, RemainingPathCount)
 _removePaths (BranchPath _ _ InvalidPath InvalidPath) depth = (InvalidPath, 0) -- Prune a branch if both branches are invalid
 _removePaths (BranchPath cond tStmts pathA pathB) depth
   | remDepth < 0 = (InvalidPath, 0) -- In this case all preceding statements are longer than what happens after branching, so K is exceeded anyway
@@ -191,6 +194,7 @@ _removePaths linpath@LinearPath {} depth
   | otherwise = (linpath, 1)
 _removePaths InvalidPath _ = (InvalidPath, 0)
 _removePaths (EmptyPath _) _ = (InvalidPath, 0) -- Invalidate empty paths
+
 --
 -- SECTION 4
 --
@@ -204,12 +208,6 @@ countBranches (TryCatchPath option1 _ option2 option3) = countBranches option1 *
 countBranches InvalidPath = 0
 countBranches (EmptyPath _) = 0
 countBranches LinearPath {} = 1
-
--- Returns the number of invalid nodes for a path of FIXED LENGTH
-numInvalid :: Num p => ProgramPath a -> p
-numInvalid (BranchPath _ _ option1 option2) = numInvalid option1 + numInvalid option2
-numInvalid InvalidPath = 1
-numInvalid _ = 0
 
 -- Returns the number of nodes with a condition of false for a path of FIXED LENGTH
 numConditionFalse :: Num p => ProgramPath Expr -> p

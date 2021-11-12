@@ -7,11 +7,12 @@ import Data.Map (Map, empty, filter, fromList, insert, intersection, keys, mapWi
 import qualified Data.Map (map)
 import Data.Maybe (catMaybes, fromMaybe)
 import GCLParser.GCLDatatype
+import GeneralTypes
 import ProgramPath (ProgramPath (..), combinePaths, unrollSeq)
-import WLP (PostConditions, considerExpr, evalExpr, simplifyExpr, traceVarExpr, wlp)
+import WLP (PostConditions, WLPType, considerExpr, evalExpr, simplifyExpr, traceVarExpr, wlp)
 import Z3.Monad
 
-evaluateFullTree :: ProgramPath Expr -> PostConditions -> [(Map String Expr -> (Expr, Map String Expr), [Stmt])]
+evaluateFullTree :: ProgramPath Expr -> PostConditions -> [(WLPType, PathStatements)]
 evaluateFullTree treepath@(BranchPath cond stmts option1 option2) postConds@(postCond, errorCond)
   | cond == LitB False = []
   | otherwise = do
@@ -112,7 +113,7 @@ evaluateTreeConds (EmptyPath cond) vars varmap = do
 evaluateTreeConds InvalidPath _ _ = return InvalidPath
 
 -- Calculates the WLP over a program path
-calcWLP :: ProgramPath Expr -> Map String Expr -> [((Expr, Map String Expr), [Stmt])]
+calcWLP :: ProgramPath Expr -> Map String Expr -> [((Expr, Map String Expr), PathStatements)]
 calcWLP tree vars = do
   let postCondition = BinopExpr Equal (Var "exc") (LitI 0) -- Postcondition is: there was no error
   let wlpPostCondition = \vars -> (considerExpr postCondition vars, vars) -- Postcondition formualted as a function that the wlp function is able to handle
@@ -122,7 +123,7 @@ calcWLP tree vars = do
     simplify (expr, vars) = (simplifyExpr expr, vars)
 
 -- Outputs if an expression can be contradicted. If so, also outputs how
-verifyExpr :: Expr -> (Map String (Z3 AST), Map String Expr, Map String Type) -> IO (Result, Integer)
+verifyExpr :: Expr -> (Map String (Z3 AST), Map String Expr, Map String Type) -> IO (Result, ExceptionCode)
 verifyExpr expr (z3vars, finalVarsExpr, types) =
   evalZ3 script >>= \(result, intMaybe, finalIntMaybe, boolMaybe, finalBoolMaybe, arrayMaybe) ->
     case result of

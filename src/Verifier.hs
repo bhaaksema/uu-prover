@@ -4,6 +4,7 @@ import Control.Monad (when)
 import Data.Map (Map, empty, insert)
 import Evaluator (addExprVariable, calcWLP, evaluateTreeConds, verifyExpr)
 import GCLParser.GCLDatatype
+import GeneralTypes
 import ProgramPath
 import System.CPUTime (getCPUTime)
 import Text.Printf (printf)
@@ -12,15 +13,11 @@ import Z3.Monad (Result (..), astToString, evalZ3)
 
 type WLP = (Expr, Map String Expr)
 
-type PathStatements = [Stmt]
-
 type WLPEvaluatingFunction = ((WLP, PathStatements) -> (IO (Result, ExceptionCode), PathStatements, WLP))
 
 type WLPEvaluationResult = IO ((Result, ExceptionCode), PathStatements, WLP)
 
 type WLPList = [(WLP, PathStatements)]
-
-type ExceptionCode = Integer
 
 -- Will return if all of the statements were correctly verified
 mapUntilSat :: WLPEvaluatingFunction -> WLPList -> WLPEvaluationResult
