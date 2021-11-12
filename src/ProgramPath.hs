@@ -182,8 +182,13 @@ _removePaths (AnnotedWhilePath invar guard whilePath postPath) depth = pruneInva
 _removePaths (TryCatchPath tryPath excName catchPath nextPath) depth = pruneInvalidTry (TryCatchPath newA excName newB newC) -- Evaluate both paths. If any turn out to be unfeasible this node is pruned as well
   where
     (newA, newACount) = removePaths depth tryPath -- Evaluate path A, see if it is feasible given the depth
-    (newB, newBCount) = removePaths depth catchPath -- Evaluate path B, see if it is feasible given the depth
-    (newC, newCCount) = removePaths depth nextPath -- Evaluate everything after this block, see if it is feasible given the depth
+    (newB, newBCount) = removePaths depthAfterTry catchPath -- Evaluate path B, see if it is feasible given the depth
+    (newC, newCCount) = removePaths depthAfterCatch nextPath -- Evaluate everything after this block, see if it is feasible given the depth
+    maxDepthTry = totalDepth tryPath depth -- See how deep try path goes, if there isn't a loop or block in there it cannot be too far
+    depthAfterTry = if maxDepthTry < depth then depth - maxDepthTry else depth
+    maxDepthCatch = totalDepth catchPath depthAfterTry -- See how deep catch path goes, if there isn't a loop or block in there it cannot be too far
+    depthAfterCatch = if maxDepthCatch < depthAfterTry then depthAfterTry - maxDepthCatch else depthAfterTry
+
     pruneInvalidTry (TryCatchPath InvalidPath _ _ _) = (InvalidPath, 0)
     pruneInvalidTry (TryCatchPath _ _ InvalidPath _) = (InvalidPath, 0)
     pruneInvalidTry (TryCatchPath _ _ _ InvalidPath) = (InvalidPath, 0)
