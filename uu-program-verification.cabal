@@ -16,8 +16,16 @@ source-repository head
 
 library
   exposed-modules:
+      BranchConditionEvaluator
       Evaluator
+      ExpressionOps
+      GeneralTypes
       ProgramPath
+      ProgramPathConstructor
+      ProgramPathOps
+      ProgramPathPrinter
+      StatementOps
+      Transformer
       Verifier
       WLP
   other-modules:
