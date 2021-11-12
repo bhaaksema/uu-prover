@@ -6,13 +6,15 @@ import Data.Map (Map, empty, insert)
 import Evaluator (addExprVariable, calcWLP, verifyExpr)
 import ExpressionOps (numExprAtoms)
 import GCLParser.GCLDatatype
-import GeneralTypes
-import ProgramPath
+import GeneralTypes (ExceptionCode, GCLVars, PathStatements)
+import ProgramPathConstructor (constructPath, removePaths)
+import ProgramPathOps (countBranches, numConditionFalse)
+import ProgramPathPrinter (printTree)
 import System.CPUTime (getCPUTime)
 import Text.Printf (printf)
 import Transformer (convertVarMap)
 import WLP (findLocvars)
-import Z3.Monad (Result (..), astToString, evalZ3)
+import Z3.Monad (Result (..))
 
 type WLP = (Expr, GCLVars)
 

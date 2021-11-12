@@ -9,7 +9,8 @@ import Data.Maybe (catMaybes, fromMaybe)
 import ExpressionOps (considerExpr, simplifyExpr)
 import GCLParser.GCLDatatype
 import GeneralTypes
-import ProgramPath (ProgramPath (..), combinePaths, unrollSeq)
+import ProgramPath (ProgramPath (..))
+import StatementOps (unrollSeq)
 import Transformer (evalExpr)
 import WLP (traceVarExpr, wlp)
 import Z3.Monad
