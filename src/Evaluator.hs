@@ -82,7 +82,6 @@ findTreeWLPS linpath@(LinearPath cond stmts) postConds
   | cond == LitB False = []
   | otherwise = do
     let path = wlp (Seq (Assume cond) stmts) postConds -- Postcondition is: exception must be code 0 (no exception)
-    let condExpr = considerExpr cond
     [(path, unrollSeq stmts)]
 findTreeWLPS (EmptyPath cond) postConds = [(\vars -> (cond, vars), [])]
 findTreeWLPS InvalidPath _ = [] --Ignore invalid path
