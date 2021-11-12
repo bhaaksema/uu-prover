@@ -12,7 +12,7 @@ import WLP (PostConditions, considerExpr, evalExpr, simplifyExpr, traceVarExpr, 
 import Z3.Monad
 
 evaluateFullTree :: ProgramPath Expr -> PostConditions -> [(Map String Expr -> (Expr, Map String Expr), [Stmt])]
-evaluateFullTree treepath@(TreePath cond stmts option1 option2) postConds@(postCond, errorCond)
+evaluateFullTree treepath@(BranchPath cond stmts option1 option2) postConds@(postCond, errorCond)
   | cond == LitB False = []
   | otherwise = do
     let expr1 = evaluateFullTree option1 postConds
@@ -84,16 +84,16 @@ evaluateFullTree (EmptyPath cond) postConds = [(\vars -> (cond, vars), [])]
 evaluateFullTree InvalidPath _ = [] --Ignore invalid path
 
 evaluateTreeConds :: ProgramPath Expr -> Map String Expr -> Map String (Z3 AST) -> IO (ProgramPath Expr)
-evaluateTreeConds (TreePath cond stmts option1 option2) vars varmap = do
+evaluateTreeConds (BranchPath cond stmts option1 option2) vars varmap = do
   let evaluatedCond = considerExpr cond vars
   condExpr <- z3Satisfiable evaluatedCond varmap
   let newVars = maybe vars (`traceVarExpr` vars) stmts
   case condExpr of
-    LitB False -> return (TreePath condExpr stmts option1 option2)
+    LitB False -> return (BranchPath condExpr stmts option1 option2)
     _ -> do
       newTree1 <- evaluateTreeConds option1 newVars varmap
       newTree2 <- evaluateTreeConds option2 newVars varmap
-      return (TreePath cond stmts newTree1 newTree2)
+      return (BranchPath cond stmts newTree1 newTree2)
 evaluateTreeConds path@(AnnotedWhilePath invar guard whilePath nextPath) vars varmap = return path -- Note that no path can be evaluated anymore now! There could be many possibilities of variables changing inside of the whilePath if it has a tree inside it.
 evaluateTreeConds path@TryCatchPath {} vars varmap = return path -- Note that no path can be evaluated anymore now! There could be many possibilities of variables changing inside of the tryPath if it has an error inside it.
 evaluateTreeConds linpath@(LinearPath cond stmts) vars varmap = do

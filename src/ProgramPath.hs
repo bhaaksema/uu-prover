@@ -5,7 +5,7 @@ import GCLParser.GCLDatatype (BinOp (..), Expr (..), Program (..), Stmt (..))
 import WLP (simplifyExpr)
 
 data ProgramPath a
-  = TreePath
+  = BranchPath
       { condition :: a,
         tStmts :: Maybe Stmt,
         option1 :: ProgramPath a,
@@ -43,27 +43,27 @@ constructPath program = _constructPath (listify $ stmt program)
 
 -- Function that will transform a statement into a ProgramPath
 _constructPath :: [Stmt] -> ProgramPath Expr
-_constructPath ((IfThenElse expr ifStmt elseStmt) : stmts) = TreePath (LitB True) Nothing (injectExpression expr ifPath) (injectExpression (OpNeg expr) elsePath)
+_constructPath ((IfThenElse expr ifStmt elseStmt) : stmts) = BranchPath (LitB True) Nothing (injectExpression expr ifPath) (injectExpression (OpNeg expr) elsePath)
   where
     ifPath = _constructPath $ listify ifStmt ++ stmts
     elsePath = _constructPath $ listify elseStmt ++ stmts
 _constructPath ((While expr stmt) : stmts) = tree
   where
-    tree = TreePath (LitB True) Nothing skipWhile runs
+    tree = BranchPath (LitB True) Nothing skipWhile runs
     stmtTree = _constructPath $ listify stmt -- Construct a path of the inner statement. This is required because there may be nested special environments.
     skipWhile = injectExpression (OpNeg expr) (_constructPath stmts)
-    runs = combinePaths stmtTree (TreePath expr Nothing skipWhile runs) -- Construct paths for when the while runs
+    runs = combinePaths stmtTree (BranchPath expr Nothing skipWhile runs) -- Construct paths for when the while runs
 _constructPath (Assert invar : w@(While expr stmt) : stmts) = tree -- A loop with an invariant was found
   where
-    tree = TreePath (LitB True) Nothing whilePath InvalidPath
+    tree = BranchPath (LitB True) Nothing whilePath InvalidPath
     -- Unroll everything in the while block, needed if there are special instructions (if-then-else, nested while) inside of this wile
     whilePath = AnnotedWhilePath invar expr (_constructPath $ listify stmt) (_constructPath stmts)
 _constructPath (TryCatch eName tryStmts catchStmts : stmts) = tree
   where
     try = TryCatchPath (_constructPath $ listify tryStmts) eName (_constructPath $ listify catchStmts) (_constructPath stmts)
     excZero = BinopExpr Equal (Var "exc") (LitI 0)
-    tryTree = TreePath excZero Nothing try InvalidPath
-    tree = TreePath (LitB True) Nothing tryTree (EmptyPath (OpNeg excZero))
+    tryTree = BranchPath excZero Nothing try InvalidPath
+    tree = BranchPath (LitB True) Nothing tryTree (EmptyPath (OpNeg excZero))
 _constructPath ((Block vars stmt) : stmts) = error $ "Found unfiltered block! \r\n" ++ show stmt -- Block should be filtered out during splitList
 _constructPath (stmt : stmts) = combinePaths (LinearPath (LitB True) stmt) $ _constructPath stmts
 _constructPath [] = EmptyPath (LitB True)
@@ -72,14 +72,14 @@ _constructPath [] = EmptyPath (LitB True)
 -- They can be used to find what kind of error was produced, as they explicitly set the corresponding exception code.
 -- Note that they add an Assert False, thus they don't further evaluate the noErrorPath and are a form of early stopping when there is an exception.
 errorCheckingPath :: ProgramPath Expr -> ProgramPath Expr
-errorCheckingPath noErrorPath = TreePath (LitB True) Nothing (injectExpression testNoException noErrorPath) t1
+errorCheckingPath noErrorPath = BranchPath (LitB True) Nothing (injectExpression testNoException noErrorPath) t1
   where
     assignPath x = LinearPath (BinopExpr Equal (Var "exc") (LitI x)) (Assign "exc" (LitI x))
     unknownException = LinearPath (LitB True) (Assign "exc" (LitI (-1))) -- This path will only be taken if exc is not 0, and not one of the already defined numbers
     testNoException = BinopExpr Equal (Var "exc") (LitI 0)
-    t1 = TreePath (OpNeg testNoException) Nothing (assignPath 1) t2
-    t2 = TreePath (LitB True) Nothing (assignPath 2) t3
-    t3 = TreePath (LitB True) Nothing (assignPath 3) unknownException
+    t1 = BranchPath (OpNeg testNoException) Nothing (assignPath 1) t2
+    t2 = BranchPath (LitB True) Nothing (assignPath 2) t3
+    t3 = BranchPath (LitB True) Nothing (assignPath 3) unknownException
 
 -- Turns seq into a list of statements
 unrollSeq :: Stmt -> [Stmt]
@@ -121,7 +121,7 @@ rollSeql [] = error "Cannot roll empty array"
 -- Injects the given expression into the condition for the given path
 injectExpression :: Expr -> ProgramPath Expr -> ProgramPath Expr
 injectExpression expr (LinearPath cond stmts) = LinearPath (BinopExpr And cond expr) stmts
-injectExpression expr (TreePath cond stmts option1 option2) = TreePath (BinopExpr And cond expr) stmts option1 option2
+injectExpression expr (BranchPath cond stmts option1 option2) = BranchPath (BinopExpr And cond expr) stmts option1 option2
 injectExpression expr (EmptyPath cond) = EmptyPath (BinopExpr And cond expr)
 injectExpression _ AnnotedWhilePath {} = error "Cannot inject expression into while block"
 injectExpression _ TryCatchPath {} = error "Cannot inject expression into try-catch block"
@@ -130,9 +130,9 @@ injectExpression _ InvalidPath = InvalidPath
 -- Utility function that can combine two ProgramPaths into a single ProgramPath
 combinePaths :: ProgramPath Expr -> ProgramPath Expr -> ProgramPath Expr
 combinePaths (LinearPath condA stmtA) (LinearPath condB stmtB) = LinearPath (simplifyExpr (BinopExpr And condA condB)) (Seq stmtA stmtB)
-combinePaths (LinearPath condA lin) (TreePath condB tStmts option1 option2) = TreePath (simplifyExpr (BinopExpr And condA condB)) newStmts option1 option2 where newStmts = maybe (Just lin) (Just . Seq lin) tStmts
-combinePaths (TreePath cond tStmts option1 option2) linpath@LinearPath {} = TreePath cond tStmts (combinePaths option1 linpath) (combinePaths option2 linpath)
-combinePaths (TreePath cond tStmts option1 option2) treepath@TreePath {} = TreePath cond tStmts (combinePaths option1 treepath) (combinePaths option2 treepath)
+combinePaths (LinearPath condA lin) (BranchPath condB tStmts option1 option2) = BranchPath (simplifyExpr (BinopExpr And condA condB)) newStmts option1 option2 where newStmts = maybe (Just lin) (Just . Seq lin) tStmts
+combinePaths (BranchPath cond tStmts option1 option2) linpath@LinearPath {} = BranchPath cond tStmts (combinePaths option1 linpath) (combinePaths option2 linpath)
+combinePaths (BranchPath cond tStmts option1 option2) treepath@BranchPath {} = BranchPath cond tStmts (combinePaths option1 treepath) (combinePaths option2 treepath)
 combinePaths (AnnotedWhilePath invar guard whilePath nextPath) otherPath = AnnotedWhilePath invar guard whilePath (combinePaths nextPath otherPath)
 combinePaths (EmptyPath cond) otherPath = injectExpression cond otherPath
 combinePaths otherPath empty@(EmptyPath cond) = combinePaths empty otherPath
@@ -153,19 +153,19 @@ removePaths depth tree
   | otherwise = _removePaths tree depth
 
 _removePaths :: ProgramPath Expr -> Int -> (ProgramPath Expr, Int)
-_removePaths (TreePath _ _ InvalidPath InvalidPath) depth = (InvalidPath, 0) -- Prune a branch if both branches are invalid
-_removePaths (TreePath cond tStmts pathA pathB) depth
+_removePaths (BranchPath _ _ InvalidPath InvalidPath) depth = (InvalidPath, 0) -- Prune a branch if both branches are invalid
+_removePaths (BranchPath cond tStmts pathA pathB) depth
   | remDepth < 0 = (InvalidPath, 0) -- In this case all preceding statements are longer than what happens after branching, so K is exceeded anyway
-  | otherwise = pruneInvalidBranch (TreePath cond tStmts newA newB) -- Evaluate both paths. If both turn out to be unfeasible this node is pruned as well
+  | otherwise = pruneInvalidBranch (BranchPath cond tStmts newA newB) -- Evaluate both paths. If both turn out to be unfeasible this node is pruned as well
   where
     baseDepth = splitDepth tStmts depth -- How many statements happen before the branch
     remDepth = depth - baseDepth -- The depth remaining after the preceding statements
     (newA, newACount) = removePaths remDepth pathA -- Evaluate path A, see if it is feasible given the depth
     (newB, newBCount) = removePaths remDepth pathB -- Evaluate path B, see if it is feasible given the depth
-    pruneInvalidBranch (TreePath cond _ InvalidPath InvalidPath) = (InvalidPath, 0) -- Invalidate path if both branches are unfeasible
+    pruneInvalidBranch (BranchPath cond _ InvalidPath InvalidPath) = (InvalidPath, 0) -- Invalidate path if both branches are unfeasible
     --
-    pruneInvalidBranch tree@(TreePath _ _ _ InvalidPath) = (tree, newACount)
-    pruneInvalidBranch tree@(TreePath _ _ InvalidPath _) = (tree, newBCount)
+    pruneInvalidBranch tree@(BranchPath _ _ _ InvalidPath) = (tree, newACount)
+    pruneInvalidBranch tree@(BranchPath _ _ InvalidPath _) = (tree, newBCount)
     pruneInvalidBranch tree = (tree, newACount + newBCount)
 _removePaths (AnnotedWhilePath invar guard whilePath postPath) depth = pruneInvalidWhile (AnnotedWhilePath invar guard newA newB) -- Evaluate both paths. If any turn out to be unfeasible this node is pruned as well
   where
@@ -198,7 +198,7 @@ _removePaths (EmptyPath _) _ = (InvalidPath, 0) -- Invalidate empty paths
 --
 
 countBranches :: Num p => ProgramPath a -> p
-countBranches (TreePath _ _ option1 option2) = countBranches option1 + countBranches option2
+countBranches (BranchPath _ _ option1 option2) = countBranches option1 + countBranches option2
 countBranches (AnnotedWhilePath _ _ option1 option2) = countBranches option1 * countBranches option2
 countBranches (TryCatchPath option1 _ option2 option3) = countBranches option1 * countBranches option2 * countBranches option3
 countBranches InvalidPath = 0
@@ -207,13 +207,13 @@ countBranches LinearPath {} = 1
 
 -- Returns the number of invalid nodes for a path of FIXED LENGTH
 numInvalid :: Num p => ProgramPath a -> p
-numInvalid (TreePath _ _ option1 option2) = numInvalid option1 + numInvalid option2
+numInvalid (BranchPath _ _ option1 option2) = numInvalid option1 + numInvalid option2
 numInvalid InvalidPath = 1
 numInvalid _ = 0
 
 -- Returns the number of nodes with a condition of false for a path of FIXED LENGTH
 numConditionFalse :: Num p => ProgramPath Expr -> p
-numConditionFalse t@(TreePath cond _ option1 option2)
+numConditionFalse t@(BranchPath cond _ option1 option2)
   | cond == LitB False = countBranches t
   | otherwise = numConditionFalse option1 + numConditionFalse option2
 numConditionFalse (AnnotedWhilePath _ _ option1 option2) = numConditionFalse option1 * numConditionFalse option2
@@ -288,7 +288,7 @@ __printTree (TryCatchPath tryPath e catchPath nextPath) depth k =
     remDepth = depth - baseDepth
     remDepth' = depth - baseDepth - baseDepth'
     tabs = replicate (2 * (k - depth)) ' ' -- Tabs for same level
-__printTree (TreePath cond tStmts option1 option2) depth k =
+__printTree (BranchPath cond tStmts option1 option2) depth k =
   tabs
     ++ "[ "
     ++ show cond
@@ -321,7 +321,7 @@ totalDepth path depth -- Wrapper for handling of non-linear ProgramPath structur
 _totalDepth :: ProgramPath a -> Int -> Int
 _totalDepth InvalidPath depth = 0 -- Invalid path has no depth
 _totalDepth (EmptyPath _) depth = 0 -- Empty path has no depth
-_totalDepth (TreePath _ tStmts option1 option2) depth = baseDepth + max (totalDepth option1 remDepth) (totalDepth option2 remDepth) --Length of a branching path is length of preceding statements + max(length branch 1, length branch 2)
+_totalDepth (BranchPath _ tStmts option1 option2) depth = baseDepth + max (totalDepth option1 remDepth) (totalDepth option2 remDepth) --Length of a branching path is length of preceding statements + max(length branch 1, length branch 2)
   where
     baseDepth = splitDepth tStmts depth -- Length of preceding statements
     remDepth = depth - baseDepth -- Depth remaining to explore after the preceding statements
