@@ -19,3 +19,5 @@ type Condition = Expr
 type WLPType = GCLVars -> (Expr, GCLVars)
 
 type PostCondition = WLPType
+
+type PostConditions = (WLPType, WLPType)

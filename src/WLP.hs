@@ -2,24 +2,22 @@ module WLP where
 
 import Data.Bifunctor (Bifunctor (first))
 import Data.Map (Map, adjust, empty, fromList, insert, member, toList, (!))
-import ExpressionOps (considerExpr, safeExpression, updateExc)
+import ExpressionOps (considerExpr, safeExpressionAndPostcondition, updateExc)
 import GCLParser.GCLDatatype
 import GeneralTypes
 import Z3.Monad
-
-type PostConditions = (WLPType, WLPType)
 
 --
 -- These functions are for generating the WLP
 --
 
 wlp :: Stmt -> PostConditions -> WLPType
-wlp (Assert expr) (q, r) vars = first (BinopExpr And safe) (q safeVars)
+wlp (Assert expr) (q, r) vars = first (BinopExpr And safe) evaluatedPost
   where
-    (safe, safeVars) = safeExpression (considerExpr expr vars) q vars
-wlp (Assume expr) (q, r) vars = first (BinopExpr Implication (Parens safe) . Parens) (q safeVars)
+    (safe, evaluatedPost, safeVars) = safeExpressionAndPostcondition (considerExpr expr vars) (q, r) vars vars
+wlp (Assume expr) (q, r) vars = first (BinopExpr Implication (Parens safe) . Parens) evaluatedPost
   where
-    (safe, safeVars) = safeExpression (considerExpr expr vars) q vars
+    (safe, evaluatedPost, safeVars) = safeExpressionAndPostcondition (considerExpr expr vars) (q, r) vars vars
 wlp Skip (q, r) vars = q vars
 wlp (Seq stmt1 stmt2) (q, r) vars = do
   let stmt2Q = wlp stmt2 (q, r)
@@ -27,26 +25,27 @@ wlp (Seq stmt1 stmt2) (q, r) vars = do
   stmt1Q vars
 wlp (Assign name expr) (q, r) vars = do
   let q' = if name == "exc" then r else q
-  let (value, safeVars) = safeExpression (considerExpr expr vars) q vars
+  let basicUpdate = insert name expr vars -- Update the value of this variable to the expression
+  let arrayLengthUpdate = insert ("#" ++ name) (vars ! ("#" ++ getArrayName expr)) basicUpdate
   let isArray = member ("#" ++ name) vars
-  let basicUpdate = insert name value safeVars -- Update the value of this variable to the expression
-  let qIfPrimitive = q' basicUpdate --If this is a primitive, evaluate q using the basic map
-  let arrayLengthUpdate = insert ("#" ++ name) (safeVars ! ("#" ++ getArrayName expr)) basicUpdate
-  let qIfArray = q' arrayLengthUpdate --If this is an array, also update the array length of this variable. Then evaluate q using the new map.
-  if isArray then qIfArray else qIfPrimitive
+  let newVars = if isArray then arrayLengthUpdate else basicUpdate
+
+  let (value, evaluatedPost, safeVars) = safeExpressionAndPostcondition (considerExpr expr vars) (q', r) vars newVars
+  evaluatedPost
   where
     getArrayName (Var name) = name -- Get name of the variable
     getArrayName (RepBy expr _ _) = getArrayName expr -- Unwrap RepBy to get the name of the original array (we need it to find the length variable later on)
     getArrayName expr = error "Trying to get array name from variable that is not an array: " ++ show expr
 wlp (AAssign name indexE expr) (q, r) vars = do
   let array = vars ! name
-  let (value, safeVars) = safeExpression (considerExpr expr vars) q vars
-  let (index, saferVars) = safeExpression (considerExpr indexE safeVars) q safeVars
-  let newVars' = insert name (RepBy array index value) saferVars
-  let lowerBound = BinopExpr LessThan index (LitI 0)
-  let upperBound = BinopExpr GreaterThanEqual index (Var $ "#" ++ name)
+  let lowerBound = BinopExpr LessThan indexE (LitI 0)
+  let upperBound = BinopExpr GreaterThanEqual indexE (Var $ "#" ++ name)
+  let newVars' = insert name (RepBy array indexE expr) vars -- This will only be used if the expression cannot throw an error
   let newVars = updateExc (BinopExpr Or lowerBound upperBound) (LitI 2) newVars'
-  q newVars
+
+  let (_, _, safeVars) = safeExpressionAndPostcondition (considerExpr expr vars) (q, r) vars newVars
+  let (_, evaluatedPost, _) = safeExpressionAndPostcondition (considerExpr indexE vars) (q, r) vars safeVars
+  evaluatedPost
 wlp s _ _ = error ("Unknown statement '" ++ show s ++ "'")
 
 -- Returns a list of all variables declared in the program

@@ -11,7 +11,7 @@ import GCLParser.GCLDatatype
 import GeneralTypes
 import ProgramPath (ProgramPath (..), combinePaths, unrollSeq)
 import Transformer (evalExpr)
-import WLP (PostConditions, traceVarExpr, wlp)
+import WLP (traceVarExpr, wlp)
 import Z3.Monad
 
 -- Will recursively find all WLPS that can be generated in the given path tree

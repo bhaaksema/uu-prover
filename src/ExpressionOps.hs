@@ -17,34 +17,52 @@ updateExc cond trueValue vars = insert "exc" (changeIf (BinopExpr And cond excZe
   where
     excZero = BinopExpr Equal (vars ! "exc") (LitI 0)
 
-safeExpression :: Expr -> PostCondition -> GCLVars -> (Expr, GCLVars)
-safeExpression i@(LitI _) q vars = (i, vars)
-safeExpression b@(LitB _) q vars = (b, vars)
-safeExpression (BinopExpr Divide expr1 expr2) q vars = do
-  let (e1, e1Vars) = safeExpression expr1 q vars
-  let (e2, e2Vars) = safeExpression expr2 q e1Vars
-  let newVars = updateExc (BinopExpr Equal e2 (LitI 0)) (LitI 1) e2Vars
-  (BinopExpr Divide expr1 expr2, newVars)
-safeExpression (BinopExpr binop expr1 expr2) q vars = do
-  let (e1, e1Vars) = safeExpression expr1 q vars
-  let (e2, e2Vars) = safeExpression expr2 q e1Vars
-  (BinopExpr binop expr1 expr2, e2Vars)
-safeExpression (OpNeg expr) q vars = first OpNeg $ safeExpression expr q vars
-safeExpression (Var name) q vars = (vars ! name, vars)
-safeExpression (ArrayElem (Var name) index) q vars = (ArrayElem (vars ! name) safeIndex, newVars)
+safeExpressionAndPostcondition :: Expr -> PostConditions -> GCLVars -> GCLVars -> (Expr, (Expr, GCLVars), GCLVars)
+safeExpressionAndPostcondition expr (q, r) originalVariables postcondVariables = (safeExpr, qrSelector, safeVars)
   where
-    (safeIndex, newVars) = safeExpression index q vars
+    (safeExpr, safeVars) = safeExpression expr originalVariables
+    newExcValue = safeVars ! "exc"
+    postcondVariables' = insert "exc" newExcValue postcondVariables
+    (ifQ, qVars) = q postcondVariables'
+    (ifR, rVars) = r postcondVariables'
+    -- Will select the correct post condition (q or r) depending on what the exc value is
+    qrSelector = (changeIf excZero ifQ ifR, combinedVars)
+    -- Now: Combine qVars and rVars st every value becomes \(qValue,rValue) -> if noError qValue else rValue
+    combinedVars = mapWithKey (\name value -> changeIf excZero value (rVars ! name)) qVars
+    excZero = BinopExpr Equal (safeVars ! "exc") (LitI 0)
+
+safeExpression :: Expr -> GCLVars -> (Expr, GCLVars)
+-- The following patterns will be able to change the exc value
+safeExpression (ArrayElem (Var name) index) vars = (ArrayElem (vars ! name) safeIndex, newVars')
+  where
+    (safeIndex, newVars) = safeExpression index vars
     lowerBound = BinopExpr LessThan index (LitI 0)
     upperBound = BinopExpr GreaterThanEqual index (Var $ "#" ++ name)
     indexUnsafe = BinopExpr Or lowerBound upperBound
     newVars' = updateExc indexUnsafe (LitI 2) newVars
-safeExpression a@(ArrayElem (RepBy e _ _) index) q vars = first (const a) $ safeExpression (ArrayElem e index) q vars -- Evaluate as if there isn't a RepBy, then put it in the first element of the tuple (gives the correct var values)
-safeExpression (Parens e) q vars = safeExpression e q vars
-safeExpression (SizeOf (Var name)) q vars = (vars ! ("#" ++ name), vars)
-safeExpression (Forall locvarName expr) q vars = first (Forall locvarName) $ safeExpression expr q vars
-safeExpression (Exists locvarName expr) q vars = first (Exists locvarName) $ safeExpression expr q vars
-safeExpression e@NewStore {} q vars = (e, vars) -- This is a wrapper for an if-then-else, thus we just pass the value along
-safeExpression e _ _ = error ("Cannot determinte if expression would result in exception: '" ++ show e ++ "'")
+safeExpression a@(ArrayElem (RepBy e _ _) index) vars = first (const a) $ safeExpression (ArrayElem e index) vars -- Evaluate as if there isn't a RepBy, then put it in the first element of the tuple (gives the correct var values)
+safeExpression (BinopExpr Divide expr1 expr2) vars = do
+  let (e1, e1Vars) = safeExpression expr1 vars
+  let (e2, e2Vars) = safeExpression expr2 e1Vars
+  let e2Zero = BinopExpr Equal e2 (LitI 0)
+  let newE2 = changeIf e2Zero (LitI 1) e2 -- Note we just make it not divide by 0 anymore. This is so that Z3 won't crash. Because we also set exc, we internally know there was a division by 0.
+  let newVars = updateExc e2Zero (LitI 1) e2Vars
+  (BinopExpr Divide e1 newE2, newVars)
+-- All these patterns are either safe or check their inner vars
+safeExpression i@(LitI _) vars = (i, vars)
+safeExpression b@(LitB _) vars = (b, vars)
+safeExpression (BinopExpr binop expr1 expr2) vars = do
+  let (e1, e1Vars) = safeExpression expr1 vars
+  let (e2, e2Vars) = safeExpression expr2 e1Vars
+  (BinopExpr binop e1 e2, e2Vars)
+safeExpression (OpNeg expr) vars = first OpNeg $ safeExpression expr vars
+safeExpression (Var name) vars = (vars ! name, vars)
+safeExpression (Parens e) vars = safeExpression e vars
+safeExpression (SizeOf (Var name)) vars = (vars ! ("#" ++ name), vars)
+safeExpression q@(Forall locvarName expr) vars = (q, vars) -- Because forall introduces a fresh variable, we are unable to see whether e.g. i in a[i] lies within the correct bounds
+safeExpression q@(Exists locvarName expr) vars = (q, vars) -- Same for exists
+safeExpression e@NewStore {} vars = (e, vars) -- This is a wrapper for an if-then-else, thus we just pass the value along
+safeExpression e _ = error ("Cannot determinte if expression would result in exception: '" ++ show e ++ "'")
 
 -- Will evaluate the expression using the given variable environment
 considerExpr :: Expr -> GCLVars -> Expr
