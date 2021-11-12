@@ -1,17 +1,20 @@
 module Verifier where
 
+import BranchConditionEvaluator (evaluateTreeConds)
 import Control.Monad (when)
 import Data.Map (Map, empty, insert)
-import Evaluator (addExprVariable, calcWLP, evaluateTreeConds, verifyExpr)
+import Evaluator (addExprVariable, calcWLP, verifyExpr)
+import ExpressionOps (numExprAtoms)
 import GCLParser.GCLDatatype
 import GeneralTypes
 import ProgramPath
 import System.CPUTime (getCPUTime)
 import Text.Printf (printf)
-import WLP (convertVarMap, findLocvars, numExprAtoms)
+import Transformer (convertVarMap)
+import WLP (findLocvars)
 import Z3.Monad (Result (..), astToString, evalZ3)
 
-type WLP = (Expr, Map String Expr)
+type WLP = (Expr, GCLVars)
 
 type WLPEvaluatingFunction = ((WLP, PathStatements) -> (IO (Result, ExceptionCode), PathStatements, WLP))
 

@@ -1,9 +1,9 @@
 module ProgramPath where
 
 import Data.Maybe (fromMaybe)
+import ExpressionOps (simplifyExpr)
 import GCLParser.GCLDatatype (BinOp (..), Expr (..), Program (..), Stmt (..))
 import GeneralTypes
-import WLP (simplifyExpr)
 
 data ProgramPath a
   = BranchPath
