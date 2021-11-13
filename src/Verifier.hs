@@ -4,7 +4,7 @@ import BranchConditionEvaluator (evaluateTreeConds)
 import Control.Monad (when)
 import Data.Map (Map, empty, insert)
 import Evaluator (addExprVariable, calcWLP, verifyExpr)
-import ExpressionOps (numExprAtoms, numExprAtomsIncRepby, removeCondExprs)
+import ExpressionOps (numExprAtoms, numExprAtomsIncCond, removeCondExprs)
 import GCLParser.GCLDatatype
 import GeneralTypes (ExceptionCode, GCLVars, PathStatements)
 import ProgramPathConstructor (constructPath, removePaths)
@@ -108,7 +108,7 @@ verifyProgram (Right program') (k, file, printWlp, printPath, useHeuristic, allo
   putStrLn ("inspected paths: " ++ show branches)
   putStrLn ("infeasible paths: " ++ show (branches - length wlps))
   putStrLn ("formula size (atoms): " ++ show (sum (map numExprAtoms wlps)) ++ " from " ++ show (length wlps) ++ " wlps")
-  putStrLn ("formula size including exception checking variables (atoms): " ++ show (sum (map numExprAtomsIncRepby wlps)))
+  putStrLn ("formula size including exception checking variables (atoms): " ++ show (sum (map numExprAtomsIncCond wlps)))
   putStrLn []
 
   -- Print the result of the verification

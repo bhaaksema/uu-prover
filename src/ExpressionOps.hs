@@ -133,15 +133,15 @@ numExprAtoms LitB {} = 1
 numExprAtoms _ = 0
 
 -- Calculates how many atoms the given expression has, taking into account expressions created because of exception checking
-numExprAtomsIncRepby :: Expr -> Int
-numExprAtomsIncRepby (BinopExpr And e1 e2) = numExprAtomsIncRepby e1 + numExprAtomsIncRepby e2
-numExprAtomsIncRepby (BinopExpr Or e1 e2) = numExprAtomsIncRepby e1 + numExprAtomsIncRepby e2
-numExprAtomsIncRepby (BinopExpr Implication e1 e2) = numExprAtomsIncRepby e1 + numExprAtomsIncRepby e2
-numExprAtomsIncRepby (BinopExpr _ e1 e2) = numExprAtomsIncRepby e1 + numExprAtomsIncRepby e2 + 1
-numExprAtomsIncRepby (Parens e) = numExprAtomsIncRepby e
-numExprAtomsIncRepby (Cond cond e1 e2) = numExprAtomsIncRepby cond + numExprAtomsIncRepby e1 + numExprAtomsIncRepby e2
-numExprAtomsIncRepby LitB {} = 1
-numExprAtomsIncRepby _ = 0
+numExprAtomsIncCond :: Expr -> Int
+numExprAtomsIncCond (BinopExpr And e1 e2) = numExprAtomsIncCond e1 + numExprAtomsIncCond e2
+numExprAtomsIncCond (BinopExpr Or e1 e2) = numExprAtomsIncCond e1 + numExprAtomsIncCond e2
+numExprAtomsIncCond (BinopExpr Implication e1 e2) = numExprAtomsIncCond e1 + numExprAtomsIncCond e2
+numExprAtomsIncCond (BinopExpr _ e1 e2) = numExprAtomsIncCond e1 + numExprAtomsIncCond e2 + 1
+numExprAtomsIncCond (Parens e) = numExprAtomsIncCond e
+numExprAtomsIncCond (Cond cond e1 e2) = numExprAtomsIncCond cond + numExprAtomsIncCond e1 + numExprAtomsIncCond e2
+numExprAtomsIncCond LitB {} = 1
+numExprAtomsIncCond _ = 0
 
 simplifyExpr :: Expr -> Expr
 -- simplifyExpr e = e --Uncomment to disable expression simplification
