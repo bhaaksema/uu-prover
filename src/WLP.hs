@@ -38,13 +38,15 @@ wlp (Assign name expr) (q, r) vars = do
     getArrayName expr = error "Trying to get array name from variable that is not an array: " ++ show expr
 wlp (AAssign name indexE expr) (q, r) vars = do
   let array = vars ! name
+  let index = considerExpr indexE vars
+  let value = considerExpr expr vars
   let lowerBound = BinopExpr LessThan indexE (LitI 0)
   let upperBound = BinopExpr GreaterThanEqual indexE (Var $ "#" ++ name)
-  let newVars' = insert name (RepBy array indexE expr) vars -- This will only be used if the expression cannot throw an error
+  let newVars' = insert name (RepBy array index value) vars -- This will only be used if the expression cannot throw an error
   let newVars = updateExc (BinopExpr Or lowerBound upperBound) (LitI 2) newVars'
 
-  let (_, _, safeVars) = safeExpressionAndPostcondition (considerExpr expr vars) (q, r) vars newVars
-  let (_, evaluatedPost, _) = safeExpressionAndPostcondition (considerExpr indexE vars) (q, r) vars safeVars
+  let (_, qAfterValue, safeVars) = safeExpressionAndPostcondition value (q, r) vars newVars
+  let (_, evaluatedPost, _) = safeExpressionAndPostcondition index (const qAfterValue, r) vars safeVars
   evaluatedPost
 wlp s _ _ = error ("Unknown statement '" ++ show s ++ "'")
 
