@@ -5,11 +5,13 @@ import Data.Map
 import GCLParser.GCLDatatype
 import GeneralTypes
 
+type DefaultValue = Expr
+
 --
 -- These functions define simple operations over expressions
 --
 
-changeIf :: Expr -> Expr -> Expr -> Expr
+changeIf :: Condition -> Expr -> DefaultValue -> Expr
 changeIf cond trueValue falseValue = NewStore (RepBy cond trueValue falseValue)
 
 updateExc :: Condition -> Expr -> GCLVars -> GCLVars
@@ -26,10 +28,10 @@ safeExpressionAndPostcondition expr (q, r) originalVariables postcondVariables =
     (ifQ, qVars) = q postcondVariables'
     (ifR, rVars) = r postcondVariables'
     -- Will select the correct post condition (q or r) depending on what the exc value is
-    qrSelector = (changeIf excZero ifQ ifR, combinedVars)
+    qrSelector = (changeIf excNotZero ifR ifQ, combinedVars)
     -- Now: Combine qVars and rVars st every value becomes \(qValue,rValue) -> if noError qValue else rValue
-    combinedVars = mapWithKey (\name value -> changeIf excZero value (rVars ! name)) qVars
-    excZero = BinopExpr Equal (safeVars ! "exc") (LitI 0)
+    combinedVars = mapWithKey (\name qValue -> changeIf excNotZero (rVars ! name) qValue) qVars
+    excNotZero = BinopExpr Equal (safeVars ! "exc") (LitI 0)
 
 safeExpression :: Expr -> GCLVars -> (Expr, GCLVars)
 -- The following patterns will be able to change the exc value
@@ -101,8 +103,8 @@ numExprAtoms (BinopExpr Or e1 e2) = numExprAtoms e1 + numExprAtoms e2
 numExprAtoms (BinopExpr Implication e1 e2) = numExprAtoms e1 + numExprAtoms e2
 numExprAtoms (BinopExpr _ e1 e2) = numExprAtoms e1 + numExprAtoms e2 + 1
 numExprAtoms (Parens e) = numExprAtoms e
-numExprAtoms (NewStore (RepBy cond e1 e2)) = numExprAtoms e1
-numExprAtoms LitB{} = 1
+numExprAtoms (NewStore (RepBy cond e1 e2)) = numExprAtoms e2
+numExprAtoms LitB {} = 1
 numExprAtoms _ = 0
 
 -- Calculates how many atoms the given expression has, taking into account expressions created because of exception checking
@@ -113,7 +115,7 @@ numExprAtomsIncRepby (BinopExpr Implication e1 e2) = numExprAtomsIncRepby e1 + n
 numExprAtomsIncRepby (BinopExpr _ e1 e2) = numExprAtomsIncRepby e1 + numExprAtomsIncRepby e2 + 1
 numExprAtomsIncRepby (Parens e) = numExprAtomsIncRepby e
 numExprAtomsIncRepby (NewStore (RepBy cond e1 e2)) = numExprAtomsIncRepby cond + numExprAtomsIncRepby e1 + numExprAtomsIncRepby e2
-numExprAtomsIncRepby LitB{} = 1
+numExprAtomsIncRepby LitB {} = 1
 numExprAtomsIncRepby _ = 0
 
 simplifyExpr :: Expr -> Expr
