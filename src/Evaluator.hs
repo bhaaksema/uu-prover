@@ -57,7 +57,7 @@ findTreeWLPS whilepath@(AnnotedWhilePath invar guard whilePath nextPath) (postCo
       let triggerExc = q (insert "exc" (LitI 3) vars) -- Run rest of program, but with exception set to 3
       let invarIfValid = BinopExpr And (BinopExpr Implication validInvar evaluatedInvar) (BinopExpr Implication (OpNeg validInvar) triggerExc)
 
-      let finalVars = updateExc validInvar (LitI 3) vars
+      let finalVars = updateExc (OpNeg validInvar) (LitI 3) vars
       (invarIfValid, finalVars)
 
     -- This function goes through a list of statements and adds variables that are assigned to as a fresh variable a map of existing variables.
