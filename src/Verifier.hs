@@ -8,7 +8,7 @@ import ExpressionOps (numExprAtoms)
 import GCLParser.GCLDatatype
 import GeneralTypes (ExceptionCode, GCLVars, PathStatements)
 import ProgramPathConstructor (constructPath, removePaths)
-import ProgramPathOps (countBranches, numConditionFalse)
+import ProgramPathOps (countBranches)
 import ProgramPathPrinter (printTree)
 import System.CPUTime (getCPUTime)
 import Text.Printf (printf)
@@ -88,7 +88,6 @@ verifyProgram (Right program') (k, file, printWlp, printPath, useHeuristic) = do
   let varmap = convertVarMap varTypes
   condPath <- evaluateTreeConds clearedPath vars varmap
   let path = if useHeuristic then condPath else clearedPath
-  let cantBranch = numConditionFalse path
 
   -- Calculate the wlp and initial variable values over the tree
   let wlpsInfo = calcWLP path vars
