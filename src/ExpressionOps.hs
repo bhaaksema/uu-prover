@@ -97,13 +97,28 @@ considerExpr' (Forall locvarName expr) vars = Forall locvarName (considerExpr ex
 considerExpr' (Exists locvarName expr) vars = Exists locvarName (considerExpr expr boundedVars)
   where
     boundedVars = insert locvarName (Var locvarName) vars
-considerExpr' e@Cond {} _ = e -- This is a wrapper for an if-then-else, thus we just pass the value along
+considerExpr' (Cond c e1 e2) vars = Cond (considerExpr c vars) (considerExpr e1 vars) (considerExpr e2 vars)
 considerExpr' e _ = error ("Unknown expression '" ++ show e ++ "'")
 
 evalBinopExpr :: Expr -> Expr
+evalBinopExpr e@(BinopExpr Divide _ _) = e -- We cannot do division, we don't know whether we get an integer as result
 evalBinopExpr (BinopExpr Plus (LitI i1) (LitI i2)) = LitI (i1 + i2)
 evalBinopExpr (BinopExpr Minus (LitI i1) (LitI i2)) = LitI (i1 - i2)
 evalBinopExpr (BinopExpr Multiply (LitI i1) (LitI i2)) = LitI (i1 * i2)
+-- (i1 + x) + i2 = (i1 + i2) + x
+evalBinopExpr (BinopExpr Plus ((BinopExpr Plus (LitI i1) other)) (LitI i2)) = BinopExpr Plus onePlustwo other
+  where onePlustwo = LitI (i1 + i2)
+-- (x + i1) + i2 = (i1 + i2) + x
+evalBinopExpr (BinopExpr Plus ((BinopExpr Plus other (LitI i1))) (LitI i2)) = BinopExpr Plus onePlustwo other
+  where onePlustwo = LitI (i1 + i2)
+-- (i1 - x) + i2 = (i1 + i2) - x
+evalBinopExpr (BinopExpr Plus ((BinopExpr Minus (LitI i1) other)) (LitI i2)) = BinopExpr Minus onePlustwo other
+  where onePlustwo = LitI (i1 + i2)
+-- (x - i1) + i2 = (i2-i1) + x
+evalBinopExpr (BinopExpr Plus ((BinopExpr Minus other (LitI i1))) (LitI i2)) = BinopExpr Plus twoMinusOne other
+  where twoMinusOne = LitI (i2 - i1)
+-- (y) - i2 = (y) + (-i2)
+evalBinopExpr (BinopExpr Minus b (LitI i2)) = evalBinopExpr $ BinopExpr Plus b (LitI (-i2))
 evalBinopExpr e = e
 
 -- Calculates how many atoms the given expression has, without taking into account expressions created because of exception checking
@@ -140,8 +155,24 @@ simplifyExpr (BinopExpr Or _ (LitB True)) = LitB True
 simplifyExpr (BinopExpr Or (LitB False) expr) = simplifyExpr expr
 simplifyExpr (BinopExpr Or expr (LitB False)) = simplifyExpr expr
 simplifyExpr (BinopExpr Implication (LitB True) expr) = simplifyExpr expr
+simplifyExpr (BinopExpr Implication (LitB False) _) = LitB True
+simplifyExpr (BinopExpr Implication p expr) = simplifyExpr' (BinopExpr Implication (simplifyExpr p) (simplifyExpr expr))
+  where
+    simplifyExpr' (BinopExpr Implication (LitB True) expr) = expr
+    simplifyExpr' expr = expr
+simplifyExpr (BinopExpr Equal (LitB a) (LitB b)) = LitB (a == b)
+simplifyExpr (BinopExpr Equal (LitI a) (LitI b)) = LitB (a == b)
 simplifyExpr (BinopExpr op expr1 expr2) = BinopExpr op (simplifyExpr expr1) (simplifyExpr expr2)
+simplifyExpr (Parens b@(LitB _)) = b
 simplifyExpr (Parens e) = Parens (simplifyExpr e)
 simplifyExpr (OpNeg (LitB False)) = LitB True
 simplifyExpr (OpNeg (LitB True)) = LitB False
+simplifyExpr (Cond c e1 e2) = newCond cond
+  where
+    cond = simplifyExpr c
+    expr1 = simplifyExpr e1
+    expr2 = simplifyExpr e2
+    newCond (LitB True) = expr1
+    newCond (LitB False) = expr2
+    newCond guard = if expr1 == expr2 then expr1 else Cond guard expr1 expr2
 simplifyExpr expr = expr
