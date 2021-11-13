@@ -10,7 +10,7 @@ import Verifier (verifyProgram)
 import Z3.Monad (Result (..))
 
 findk :: [Char] -> Int -> Int
-findk file n = head [k | k <- [1 ..], Unsat == unsafePerformIO (verifyProgram (modProgram (unsafePerformIO (parseGCLfile file)) n) (k + 1, file, False, False))]
+findk file n = head [k | k <- [1 ..], Unsat == unsafePerformIO (verifyProgram (modProgram (unsafePerformIO (parseGCLfile file)) n) (k + 1, file, False, False, True))]
 
 -- main :: IO ()
 -- main = do
@@ -25,13 +25,15 @@ modProgram (Right (Program name input output stmt)) n = do
   let seq = Seq (Assign "N" (LitI n)) stmt
   Right (Program name (inp : input) output seq)
 
-run :: [Char] -> Int -> IO ()
-run file n = do
+run :: [Char] -> Int -> Int -> Bool -> IO ()
+run file k n h = do
   program <- parseGCLfile file
-  void (verifyProgram (modProgram program n) (6, file, False, False))
+  void (verifyProgram (modProgram program n) (k + 1, file, False, False, h))
 
 main :: IO ()
 main = do
   let dir = "bench/input/"
   files <- listDirectory dir
-  defaultMain [bench (f ++ " for N = " ++ show n) $ nfIO (run (dir ++ f) n) | f <- files, n <- [2 .. 10]]
+  defaultMain [bench (f ++ "{K=" ++ show k ++ ",N=" ++ show n ++ ",H=" ++ show h ++ "}") $ nfIO (run (dir ++ f) k n h) | f <- files, n <- [2 .. 10], h <- [True, False]]
+  where
+    k = 5

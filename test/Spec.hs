@@ -7,7 +7,7 @@ import Verifier (verifyProgram)
 
 run :: Int -> [Char] -> IO ()
 run k file = do
-  let parsedArgs = (k, file, False, False)
+  let parsedArgs = (k, file, False, False, True)
   program <- parseGCLfile file
   void (verifyProgram program parsedArgs)
 
