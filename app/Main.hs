@@ -6,7 +6,7 @@ import System.Environment (getArgs)
 import Verifier (verifyProgram)
 
 parseArgs :: [[Char]] -> (Int, [Char], Bool, Bool, Bool)
-parseArgs [] = (10, "test/input/reverse.gcl", False, False, True)
+parseArgs [] = (10, "input/test/reverse.gcl", False, False, True)
 parseArgs ("-K" : arg : args) = (read arg, a2, a3, a4, a5)
   where
     (_, a2, a3, a4, a5) = parseArgs args
