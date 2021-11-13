@@ -66,6 +66,16 @@ safeExpression q@(Exists locvarName expr) vars = (q, vars) -- Same for exists
 safeExpression e@NewStore {} vars = (e, vars) -- This is a wrapper for an if-then-else, thus we just pass the value along
 safeExpression e _ = error ("Cannot determinte if expression would result in exception: '" ++ show e ++ "'")
 
+removeChangeIfs :: Expr -> Expr
+removeChangeIfs (NewStore (RepBy _ _ expr)) = removeChangeIfs expr
+removeChangeIfs (BinopExpr b e1 e2) = BinopExpr b (removeChangeIfs e1) (removeChangeIfs e2)
+removeChangeIfs (ArrayElem index val) = ArrayElem (removeChangeIfs index) (removeChangeIfs val)
+removeChangeIfs (RepBy e1 e2 e3) = RepBy (removeChangeIfs e1) (removeChangeIfs e2) (removeChangeIfs e3)
+removeChangeIfs (Parens e) = Parens (removeChangeIfs e)
+removeChangeIfs (OpNeg e) = OpNeg (removeChangeIfs e)
+removeChangeIfs (SizeOf e) = SizeOf (removeChangeIfs e)
+removeChangeIfs e = e
+
 -- Will evaluate the expression using the given variable environment
 considerExpr :: Expr -> GCLVars -> Expr
 considerExpr expr = considerExpr' (simplifyExpr expr)
