@@ -66,11 +66,11 @@ renameSpecials (Program name inputs outputs stmts) = Program name (declRename in
     renameSpecials' s = s
 
 -- Main funtion that verifies the program
-verifyProgram :: Either a Program -> (Int, [Char], Bool, Bool) -> IO Result
+verifyProgram :: Either a Program -> (Int, [Char], Bool, Bool, Bool) -> IO Result
 verifyProgram (Left _) _ = do
   putStrLn "unable to parse program"
   return Undef
-verifyProgram (Right program') (k, file, printWlp, printPath) = do
+verifyProgram (Right program') (k, file, printWlp, printPath, useHeuristic) = do
   putStrLn ("verifying " ++ file ++ " for K = " ++ show k)
   putStrLn []
 
@@ -87,24 +87,26 @@ verifyProgram (Right program') (k, file, printWlp, printPath) = do
   let varTypes = insert "exc" (PType PTInt) varTypes'
   let varmap = convertVarMap varTypes
   condPath <- evaluateTreeConds clearedPath vars varmap
-  let cantBranch = numConditionFalse condPath
+  let path = if useHeuristic then condPath else clearedPath
+  let cantBranch = numConditionFalse path
 
   -- Calculate the wlp and initial variable values over the tree
-  let wlpsInfo = calcWLP condPath vars
+  let wlpsInfo = calcWLP path vars
   let wlps = map (fst . fst) wlpsInfo
 
   -- Print path if the argument -path was specified
   when printPath $ putStrLn "The path is:"
-  when printPath $
-    putStrLn (printTree condPath k)
+  when printPath $ putStrLn (printTree path k)
+  when printPath $ putStrLn []
 
   -- Print wlp and z3 script if -wlp was specified
   when printWlp $ putStrLn "The WLPs are:"
   when printWlp $ print wlps
+  when printWlp $ putStrLn []
 
   -- Statistics
-  putStrLn ("inspected paths: " ++ show (countBranches condPath))
-  putStrLn ("inspected paths: " ++ show branches)
+  putStrLn ("paths encountered: " ++ show branches)
+  when useHeuristic $ putStrLn ("paths pruned by heuristic: " ++ show (countBranches path - branches))
   putStrLn ("infeasible paths: " ++ show (branches - length wlps))
   putStrLn ("formula size (atoms): " ++ show (sum (map numExprAtoms wlps)) ++ " from " ++ show (length wlps) ++ " wlps")
 
