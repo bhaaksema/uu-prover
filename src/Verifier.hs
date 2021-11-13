@@ -104,13 +104,12 @@ verifyProgram (Right program') (k, file, printWlp, printPath, useHeuristic) = do
   when printWlp $ putStrLn []
 
   -- Statistics
-  putStrLn ("paths encountered: " ++ show branches)
-  when useHeuristic $ putStrLn ("paths pruned by heuristic: " ++ show (countBranches path - branches))
+  putStrLn ("inspected paths: " ++ show branches)
   putStrLn ("infeasible paths: " ++ show (branches - length wlps))
   putStrLn ("formula size (atoms): " ++ show (sum (map numExprAtoms wlps)) ++ " from " ++ show (length wlps) ++ " wlps")
+  putStrLn []
 
   -- Print the result of the verification
-  putStrLn []
   ((evalVerdict, excCode), finalPath, (finalWlp, finalVars)) <- mapUntilSat (\((wlp, vars), path) -> (verifyExpr (OpNeg wlp) (varmap, vars, varTypes), path, (wlp, vars))) wlpsInfo
   let result = if branches == 0 then Undef else evalVerdict
   case result of
