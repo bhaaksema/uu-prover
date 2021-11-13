@@ -53,6 +53,7 @@ safeExpression (BinopExpr Divide expr1 expr2) vars = do
 -- All these patterns are either safe or check their inner vars
 safeExpression i@(LitI _) vars = (i, vars)
 safeExpression b@(LitB _) vars = (b, vars)
+safeExpression r@RepBy {} vars = (r, vars) -- Expressions within the RepBy are checked when it is created, therefore it must be safe at this point.
 safeExpression (BinopExpr binop expr1 expr2) vars = do
   let (e1, e1Vars) = safeExpression expr1 vars
   let (e2, e2Vars) = safeExpression expr2 e1Vars
@@ -107,18 +108,22 @@ evalBinopExpr (BinopExpr Minus (LitI i1) (LitI i2)) = LitI (i1 - i2)
 evalBinopExpr (BinopExpr Multiply (LitI i1) (LitI i2)) = LitI (i1 * i2)
 -- (i1 + x) + i2 = (i1 + i2) + x
 evalBinopExpr (BinopExpr Plus ((BinopExpr Plus (LitI i1) other)) (LitI i2)) = BinopExpr Plus onePlustwo other
-  where onePlustwo = LitI (i1 + i2)
+  where
+    onePlustwo = LitI (i1 + i2)
 -- (x + i1) + i2 = (i1 + i2) + x
 evalBinopExpr (BinopExpr Plus ((BinopExpr Plus other (LitI i1))) (LitI i2)) = BinopExpr Plus onePlustwo other
-  where onePlustwo = LitI (i1 + i2)
+  where
+    onePlustwo = LitI (i1 + i2)
 -- (i1 - x) + i2 = (i1 + i2) - x
 evalBinopExpr (BinopExpr Plus ((BinopExpr Minus (LitI i1) other)) (LitI i2)) = BinopExpr Minus onePlustwo other
-  where onePlustwo = LitI (i1 + i2)
+  where
+    onePlustwo = LitI (i1 + i2)
 -- (x - i1) + i2 = (i2-i1) + x
 evalBinopExpr (BinopExpr Plus ((BinopExpr Minus other (LitI i1))) (LitI i2)) = BinopExpr Plus twoMinusOne other
-  where twoMinusOne = LitI (i2 - i1)
+  where
+    twoMinusOne = LitI (i2 - i1)
 -- (y) - i2 = (y) + (-i2)
-evalBinopExpr (BinopExpr Minus b (LitI i2)) = evalBinopExpr $ BinopExpr Plus b (LitI (-i2))
+evalBinopExpr (BinopExpr Minus b (LitI i2)) = evalBinopExpr $ BinopExpr Plus b (LitI (- i2))
 evalBinopExpr e = e
 
 -- Calculates how many atoms the given expression has, without taking into account expressions created because of exception checking
