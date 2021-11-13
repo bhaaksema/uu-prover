@@ -2,6 +2,7 @@ module Verifier where
 
 import BranchConditionEvaluator (evaluateTreeConds)
 import Control.Monad (when)
+import Data.Bifunctor (first)
 import Data.Map (Map, empty, insert)
 import Evaluator (addExprVariable, calcWLP, verifyExpr)
 import ExpressionOps (numExprAtoms, numExprAtomsIncCond, removeCondExprs)
@@ -15,7 +16,6 @@ import Text.Printf (printf)
 import Transformer (convertVarMap)
 import WLP (findLocvars)
 import Z3.Monad (Result (..))
-import Data.Bifunctor (first)
 
 type WLP = (Expr, GCLVars)
 
