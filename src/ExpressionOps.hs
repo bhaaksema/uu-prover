@@ -33,7 +33,7 @@ safeExpressionAndPostcondition expr (q, r) originalVariables postcondVariables =
 
 safeExpression :: Expr -> GCLVars -> (Expr, GCLVars)
 -- The following patterns will be able to change the exc value
-safeExpression (ArrayElem (Var name) index) vars = (ArrayElem (vars ! name) safeIndex, newVars')
+safeExpression a@(ArrayElem (Var name) index) vars = (ArrayElem (Var name) safeIndex, newVars')
   where
     (safeIndex, newVars) = safeExpression index vars
     lowerBound = BinopExpr LessThan index (LitI 0)
@@ -56,9 +56,9 @@ safeExpression (BinopExpr binop expr1 expr2) vars = do
   let (e2, e2Vars) = safeExpression expr2 e1Vars
   (BinopExpr binop e1 e2, e2Vars)
 safeExpression (OpNeg expr) vars = first OpNeg $ safeExpression expr vars
-safeExpression (Var name) vars = (vars ! name, vars)
+safeExpression (Var name) vars = (Var name, vars)
 safeExpression (Parens e) vars = safeExpression e vars
-safeExpression (SizeOf (Var name)) vars = (vars ! ("#" ++ name), vars)
+safeExpression (SizeOf (Var name)) vars = (SizeOf (Var name), vars)
 safeExpression q@(Forall locvarName expr) vars = (q, vars) -- Because forall introduces a fresh variable, we are unable to see whether e.g. i in a[i] lies within the correct bounds
 safeExpression q@(Exists locvarName expr) vars = (q, vars) -- Same for exists
 safeExpression e@NewStore {} vars = (e, vars) -- This is a wrapper for an if-then-else, thus we just pass the value along
