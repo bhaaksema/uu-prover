@@ -25,7 +25,8 @@ wlp (Seq stmt1 stmt2) (q, r) vars = do
   stmt1Q vars
 wlp (Assign name expr) (q, r) vars = do
   let q' = if name == "exc" then r else q
-  let basicUpdate = insert name expr vars -- Update the value of this variable to the expression
+  let value = considerExpr expr vars
+  let basicUpdate = insert name value vars -- Update the value of this variable to the expression
   let arrayLengthUpdate = insert ("#" ++ name) (vars ! ("#" ++ getArrayName expr)) basicUpdate
   let isArray = member ("#" ++ name) vars
   let newVars = if isArray then arrayLengthUpdate else basicUpdate
