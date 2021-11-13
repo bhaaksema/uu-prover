@@ -25,7 +25,8 @@ wlp (Seq stmt1 stmt2) (q, r) vars = do
   stmt1Q vars
 wlp (Assign name expr) (q, r) vars = do
   let q' = if name == "exc" then r else q
-  let basicUpdate = insert name expr vars -- Update the value of this variable to the expression
+  let value = considerExpr expr vars
+  let basicUpdate = insert name value vars -- Update the value of this variable to the expression
   let arrayLengthUpdate = insert ("#" ++ name) (vars ! ("#" ++ getArrayName expr)) basicUpdate
   let isArray = member ("#" ++ name) vars
   let newVars = if isArray then arrayLengthUpdate else basicUpdate
@@ -38,13 +39,15 @@ wlp (Assign name expr) (q, r) vars = do
     getArrayName expr = error "Trying to get array name from variable that is not an array: " ++ show expr
 wlp (AAssign name indexE expr) (q, r) vars = do
   let array = vars ! name
-  let lowerBound = BinopExpr LessThan indexE (LitI 0)
-  let upperBound = BinopExpr GreaterThanEqual indexE (Var $ "#" ++ name)
-  let newVars' = insert name (RepBy array indexE expr) vars -- This will only be used if the expression cannot throw an error
+  let index = considerExpr indexE vars
+  let value = considerExpr expr vars
+  let lowerBound = BinopExpr LessThan index (LitI 0)
+  let upperBound = BinopExpr GreaterThanEqual index (Var $ "#" ++ name)
+  let newVars' = insert name (RepBy array index value) vars -- This will only be used if the expression cannot throw an error
   let newVars = updateExc (BinopExpr Or lowerBound upperBound) (LitI 2) newVars'
 
-  let (_, _, safeVars) = safeExpressionAndPostcondition (considerExpr expr vars) (q, r) vars newVars
-  let (_, evaluatedPost, _) = safeExpressionAndPostcondition (considerExpr indexE vars) (q, r) vars safeVars
+  let (_, qAfterValue@(_, safeVars), _) = safeExpressionAndPostcondition value (q, r) newVars newVars
+  let (_, evaluatedPost, _) = safeExpressionAndPostcondition index (const qAfterValue, r) safeVars safeVars
   evaluatedPost
 wlp s _ _ = error ("Unknown statement '" ++ show s ++ "'")
 

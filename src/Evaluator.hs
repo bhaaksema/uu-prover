@@ -6,7 +6,7 @@ module Evaluator where
 import Data.Map (Map, empty, filter, fromList, insert, intersection, keys, mapWithKey, toList, (!))
 import qualified Data.Map (map)
 import Data.Maybe (catMaybes, fromMaybe)
-import ExpressionOps (considerExpr, simplifyExpr)
+import ExpressionOps (considerExpr, simplifyExpr, updateExc)
 import GCLParser.GCLDatatype
 import GeneralTypes
 import ProgramPath (ProgramPath (..))
@@ -57,9 +57,7 @@ findTreeWLPS whilepath@(AnnotedWhilePath invar guard whilePath nextPath) (postCo
       let triggerExc = q (insert "exc" (LitI 3) vars) -- Run rest of program, but with exception set to 3
       let invarIfValid = BinopExpr And (BinopExpr Implication validInvar evaluatedInvar) (BinopExpr Implication (OpNeg validInvar) triggerExc)
 
-      let oldExcZero = BinopExpr Equal (vars ! "exc") (LitI 0)
-      let newExcValue = NewStore (RepBy (BinopExpr Or validInvar (OpNeg oldExcZero)) (vars ! "exc") (LitI 3))
-      let finalVars = insert "exc" newExcValue vars
+      let finalVars = updateExc (OpNeg validInvar) (LitI 3) vars
       (invarIfValid, finalVars)
 
     -- This function goes through a list of statements and adds variables that are assigned to as a fresh variable a map of existing variables.

@@ -4,7 +4,7 @@ import BranchConditionEvaluator (evaluateTreeConds)
 import Control.Monad (when)
 import Data.Map (Map, empty, insert)
 import Evaluator (addExprVariable, calcWLP, verifyExpr)
-import ExpressionOps (numExprAtoms)
+import ExpressionOps (numExprAtoms, numExprAtomsIncCond, removeCondExprs)
 import GCLParser.GCLDatatype
 import GeneralTypes (ExceptionCode, GCLVars, PathStatements)
 import ProgramPathConstructor (constructPath, removePaths)
@@ -15,6 +15,7 @@ import Text.Printf (printf)
 import Transformer (convertVarMap)
 import WLP (findLocvars)
 import Z3.Monad (Result (..))
+import Data.Bifunctor (first)
 
 type WLP = (Expr, GCLVars)
 
@@ -66,11 +67,11 @@ renameSpecials (Program name inputs outputs stmts) = Program name (declRename in
     renameSpecials' s = s
 
 -- Main funtion that verifies the program
-verifyProgram :: Either a Program -> (Int, [Char], Bool, Bool, Bool) -> IO Result
+verifyProgram :: Either a Program -> (Int, [Char], Bool, Bool, Bool, Bool) -> IO Result
 verifyProgram (Left _) _ = do
   putStrLn "unable to parse program"
   return Undef
-verifyProgram (Right program') (k, file, printWlp, printPath, useHeuristic) = do
+verifyProgram (Right program') (k, file, printWlp, printPath, useHeuristic, allowUnsafeExpressions) = do
   putStrLn ("verifying " ++ file ++ " for K = " ++ show k)
   putStrLn []
 
@@ -90,7 +91,7 @@ verifyProgram (Right program') (k, file, printWlp, printPath, useHeuristic) = do
   let path = if useHeuristic then condPath else clearedPath
 
   -- Calculate the wlp and initial variable values over the tree
-  let wlpsInfo = calcWLP path vars
+  let wlpsInfo = map (first $ first (if allowUnsafeExpressions then removeCondExprs else id)) $ calcWLP path vars
   let wlps = map (fst . fst) wlpsInfo
 
   -- Print path if the argument -path was specified
@@ -107,6 +108,7 @@ verifyProgram (Right program') (k, file, printWlp, printPath, useHeuristic) = do
   putStrLn ("inspected paths: " ++ show branches)
   putStrLn ("infeasible paths: " ++ show (branches - length wlps))
   putStrLn ("formula size (atoms): " ++ show (sum (map numExprAtoms wlps)) ++ " from " ++ show (length wlps) ++ " wlps")
+  putStrLn ("formula size including exception checking variables (atoms): " ++ show (sum (map numExprAtomsIncCond wlps)))
   putStrLn []
 
   -- Print the result of the verification

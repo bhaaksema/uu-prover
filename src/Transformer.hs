@@ -63,7 +63,7 @@ evalExpr' (Exists locvarName expr) vars = do
   mkExistsConst [] [quantifier'] =<< evalExpr' expr boundedVars
 -- This is a special construct that allows for making a value dependent on a condition. This allows for e.g. exc := IF a == b THEN 0 ELSE 5.
 -- This is used especially for the finding the final values of variables.
-evalExpr' (NewStore (RepBy condition trueValue falseValue)) vars = do
+evalExpr' (Cond condition trueValue falseValue) vars = do
   ifTrue <- evalExpr trueValue vars
   ifFalse <- evalExpr falseValue vars
   condition <- evalExpr condition vars
