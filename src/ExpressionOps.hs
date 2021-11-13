@@ -94,11 +94,27 @@ evalBinopExpr (BinopExpr Minus (LitI i1) (LitI i2)) = LitI (i1 - i2)
 evalBinopExpr (BinopExpr Multiply (LitI i1) (LitI i2)) = LitI (i1 * i2)
 evalBinopExpr e = e
 
--- Calculates how many atoms the given expression has
+-- Calculates how many atoms the given expression has, without taking into account expressions created because of exception checking
 numExprAtoms :: Expr -> Int
-numExprAtoms (BinopExpr _ e1 e2) = numExprAtoms e1 + numExprAtoms e2
+numExprAtoms (BinopExpr And e1 e2) = numExprAtoms e1 + numExprAtoms e2
+numExprAtoms (BinopExpr Or e1 e2) = numExprAtoms e1 + numExprAtoms e2
+numExprAtoms (BinopExpr Implication e1 e2) = numExprAtoms e1 + numExprAtoms e2
+numExprAtoms (BinopExpr _ e1 e2) = numExprAtoms e1 + numExprAtoms e2 + 1
 numExprAtoms (Parens e) = numExprAtoms e
-numExprAtoms _ = 1
+numExprAtoms (NewStore (RepBy cond e1 e2)) = numExprAtoms e1
+numExprAtoms LitB{} = 1
+numExprAtoms _ = 0
+
+-- Calculates how many atoms the given expression has, taking into account expressions created because of exception checking
+numExprAtomsIncRepby :: Expr -> Int
+numExprAtomsIncRepby (BinopExpr And e1 e2) = numExprAtomsIncRepby e1 + numExprAtomsIncRepby e2
+numExprAtomsIncRepby (BinopExpr Or e1 e2) = numExprAtomsIncRepby e1 + numExprAtomsIncRepby e2
+numExprAtomsIncRepby (BinopExpr Implication e1 e2) = numExprAtomsIncRepby e1 + numExprAtomsIncRepby e2
+numExprAtomsIncRepby (BinopExpr _ e1 e2) = numExprAtomsIncRepby e1 + numExprAtomsIncRepby e2 + 1
+numExprAtomsIncRepby (Parens e) = numExprAtomsIncRepby e
+numExprAtomsIncRepby (NewStore (RepBy cond e1 e2)) = numExprAtomsIncRepby cond + numExprAtomsIncRepby e1 + numExprAtomsIncRepby e2
+numExprAtomsIncRepby LitB{} = 1
+numExprAtomsIncRepby _ = 0
 
 simplifyExpr :: Expr -> Expr
 -- simplifyExpr e = e --Uncomment to disable expression simplification
