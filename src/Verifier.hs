@@ -4,7 +4,7 @@ import BranchConditionEvaluator (evaluateTreeConds)
 import Control.Monad (when)
 import Data.Map (Map, empty, insert)
 import Evaluator (addExprVariable, calcWLP, verifyExpr)
-import ExpressionOps (numExprAtoms, numExprAtomsIncRepby)
+import ExpressionOps (numExprAtoms, numExprAtomsIncRepby, removeCondExprs)
 import GCLParser.GCLDatatype
 import GeneralTypes (ExceptionCode, GCLVars, PathStatements)
 import ProgramPathConstructor (constructPath, removePaths)

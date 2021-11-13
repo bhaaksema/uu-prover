@@ -12,7 +12,7 @@ type DefaultValue = Expr
 --
 
 changeIf :: Condition -> Expr -> DefaultValue -> Expr
-changeIf cond trueValue falseValue = NewStore (RepBy cond trueValue falseValue)
+changeIf = Cond
 
 updateExc :: Condition -> Expr -> GCLVars -> GCLVars
 updateExc cond trueValue vars = insert "exc" (changeIf (BinopExpr And cond excZero) trueValue (vars ! "exc")) vars
@@ -31,7 +31,7 @@ safeExpressionAndPostcondition expr (q, r) originalVariables postcondVariables =
     qrSelector = (changeIf excNotZero ifR ifQ, combinedVars)
     -- Now: Combine qVars and rVars st every value becomes \(qValue,rValue) -> if noError qValue else rValue
     combinedVars = mapWithKey (\name qValue -> changeIf excNotZero (rVars ! name) qValue) qVars
-    excNotZero = BinopExpr Equal (safeVars ! "exc") (LitI 0)
+    excNotZero = OpNeg (BinopExpr Equal (safeVars ! "exc") (LitI 0))
 
 safeExpression :: Expr -> GCLVars -> (Expr, GCLVars)
 -- The following patterns will be able to change the exc value
@@ -63,18 +63,18 @@ safeExpression (Parens e) vars = safeExpression e vars
 safeExpression (SizeOf (Var name)) vars = (SizeOf (Var name), vars)
 safeExpression q@(Forall locvarName expr) vars = (q, vars) -- Because forall introduces a fresh variable, we are unable to see whether e.g. i in a[i] lies within the correct bounds
 safeExpression q@(Exists locvarName expr) vars = (q, vars) -- Same for exists
-safeExpression e@NewStore {} vars = (e, vars) -- This is a wrapper for an if-then-else, thus we just pass the value along
+safeExpression e@Cond {} vars = (e, vars) -- This is a wrapper for an if-then-else, thus we just pass the value along
 safeExpression e _ = error ("Cannot determinte if expression would result in exception: '" ++ show e ++ "'")
 
-removeChangeIfs :: Expr -> Expr
-removeChangeIfs (NewStore (RepBy _ _ expr)) = removeChangeIfs expr
-removeChangeIfs (BinopExpr b e1 e2) = BinopExpr b (removeChangeIfs e1) (removeChangeIfs e2)
-removeChangeIfs (ArrayElem index val) = ArrayElem (removeChangeIfs index) (removeChangeIfs val)
-removeChangeIfs (RepBy e1 e2 e3) = RepBy (removeChangeIfs e1) (removeChangeIfs e2) (removeChangeIfs e3)
-removeChangeIfs (Parens e) = Parens (removeChangeIfs e)
-removeChangeIfs (OpNeg e) = OpNeg (removeChangeIfs e)
-removeChangeIfs (SizeOf e) = SizeOf (removeChangeIfs e)
-removeChangeIfs e = e
+removeCondExprs :: Expr -> Expr
+removeCondExprs (Cond _ _ expr) = removeCondExprs expr
+removeCondExprs (BinopExpr b e1 e2) = BinopExpr b (removeCondExprs e1) (removeCondExprs e2)
+removeCondExprs (ArrayElem index val) = ArrayElem (removeCondExprs index) (removeCondExprs val)
+removeCondExprs (RepBy e1 e2 e3) = RepBy (removeCondExprs e1) (removeCondExprs e2) (removeCondExprs e3)
+removeCondExprs (Parens e) = Parens (removeCondExprs e)
+removeCondExprs (OpNeg e) = OpNeg (removeCondExprs e)
+removeCondExprs (SizeOf e) = SizeOf (removeCondExprs e)
+removeCondExprs e = e
 
 -- Will evaluate the expression using the given variable environment
 considerExpr :: Expr -> GCLVars -> Expr
@@ -97,7 +97,7 @@ considerExpr' (Forall locvarName expr) vars = Forall locvarName (considerExpr ex
 considerExpr' (Exists locvarName expr) vars = Exists locvarName (considerExpr expr boundedVars)
   where
     boundedVars = insert locvarName (Var locvarName) vars
-considerExpr' e@NewStore {} _ = e -- This is a wrapper for an if-then-else, thus we just pass the value along
+considerExpr' e@Cond {} _ = e -- This is a wrapper for an if-then-else, thus we just pass the value along
 considerExpr' e _ = error ("Unknown expression '" ++ show e ++ "'")
 
 evalBinopExpr :: Expr -> Expr
@@ -113,7 +113,7 @@ numExprAtoms (BinopExpr Or e1 e2) = numExprAtoms e1 + numExprAtoms e2
 numExprAtoms (BinopExpr Implication e1 e2) = numExprAtoms e1 + numExprAtoms e2
 numExprAtoms (BinopExpr _ e1 e2) = numExprAtoms e1 + numExprAtoms e2 + 1
 numExprAtoms (Parens e) = numExprAtoms e
-numExprAtoms (NewStore (RepBy cond e1 e2)) = numExprAtoms e2
+numExprAtoms (Cond cond e1 e2) = numExprAtoms e2
 numExprAtoms LitB {} = 1
 numExprAtoms _ = 0
 
@@ -124,7 +124,7 @@ numExprAtomsIncRepby (BinopExpr Or e1 e2) = numExprAtomsIncRepby e1 + numExprAto
 numExprAtomsIncRepby (BinopExpr Implication e1 e2) = numExprAtomsIncRepby e1 + numExprAtomsIncRepby e2
 numExprAtomsIncRepby (BinopExpr _ e1 e2) = numExprAtomsIncRepby e1 + numExprAtomsIncRepby e2 + 1
 numExprAtomsIncRepby (Parens e) = numExprAtomsIncRepby e
-numExprAtomsIncRepby (NewStore (RepBy cond e1 e2)) = numExprAtomsIncRepby cond + numExprAtomsIncRepby e1 + numExprAtomsIncRepby e2
+numExprAtomsIncRepby (Cond cond e1 e2) = numExprAtomsIncRepby cond + numExprAtomsIncRepby e1 + numExprAtomsIncRepby e2
 numExprAtomsIncRepby LitB {} = 1
 numExprAtomsIncRepby _ = 0
 
