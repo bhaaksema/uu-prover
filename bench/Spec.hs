@@ -10,7 +10,7 @@ import Verifier (verifyProgram)
 import Z3.Monad (Result (..))
 
 findk :: [Char] -> Int -> Int
-findk file n = head [k | k <- [1 ..], Unsat == unsafePerformIO (verifyProgram (modProgram (unsafePerformIO (parseGCLfile file)) n) (k + 1, file, False, False, True))]
+findk file n = head [k | k <- [1 ..], Unsat == unsafePerformIO (verifyProgram (modProgram (unsafePerformIO (parseGCLfile file)) n) (k + 1, file, False, False, True, False))]
 
 -- main :: IO ()
 -- main = do
@@ -28,7 +28,7 @@ modProgram (Right (Program name input output stmt)) n = do
 run :: [Char] -> Int -> Int -> Bool -> IO ()
 run file k n h = do
   program <- parseGCLfile file
-  void (verifyProgram (modProgram program n) (k + 1, file, False, False, h))
+  void (verifyProgram (modProgram program n) (k + 1, file, False, False, h, False))
 
 main :: IO ()
 main = do
