@@ -15,6 +15,7 @@ import Text.Printf (printf)
 import Transformer (convertVarMap)
 import WLP (findLocvars)
 import Z3.Monad (Result (..))
+import Data.Bifunctor (first)
 
 type WLP = (Expr, GCLVars)
 
@@ -66,11 +67,11 @@ renameSpecials (Program name inputs outputs stmts) = Program name (declRename in
     renameSpecials' s = s
 
 -- Main funtion that verifies the program
-verifyProgram :: Either a Program -> (Int, [Char], Bool, Bool, Bool) -> IO Result
+verifyProgram :: Either a Program -> (Int, [Char], Bool, Bool, Bool, Bool) -> IO Result
 verifyProgram (Left _) _ = do
   putStrLn "unable to parse program"
   return Undef
-verifyProgram (Right program') (k, file, printWlp, printPath, useHeuristic) = do
+verifyProgram (Right program') (k, file, printWlp, printPath, useHeuristic, allowUnsafeExpressions) = do
   putStrLn ("verifying " ++ file ++ " for K = " ++ show k)
   putStrLn []
 
@@ -90,7 +91,7 @@ verifyProgram (Right program') (k, file, printWlp, printPath, useHeuristic) = do
   let path = if useHeuristic then condPath else clearedPath
 
   -- Calculate the wlp and initial variable values over the tree
-  let wlpsInfo = calcWLP path vars
+  let wlpsInfo = map (first $ first (if allowUnsafeExpressions then removeCondExprs else id)) $ calcWLP path vars
   let wlps = map (fst . fst) wlpsInfo
 
   -- Print path if the argument -path was specified
