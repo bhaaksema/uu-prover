@@ -4,7 +4,6 @@ import Control.Monad (void)
 import Criterion.Main (bench, bgroup, defaultMain, nfIO)
 import GCLParser.GCLDatatype
 import GCLParser.Parser (parseGCLfile)
-import MuGCL (mutateProgram)
 import System.Directory (listDirectory)
 import Verifier (verifyProgram)
 
