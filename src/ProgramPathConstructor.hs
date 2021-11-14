@@ -37,7 +37,7 @@ _constructPath (Assert invar : w@(While expr stmt) : stmts) = tree -- A loop wit
     whilePath = AnnotedWhilePath invar expr (_constructPath $ listify stmt) (_constructPath stmts)
 _constructPath (TryCatch eName tryStmts catchStmts : stmts) = tree
   where
-    try = TryCatchPath (_constructPath $ listify tryStmts) eName (_constructPath $ listify catchStmts) (_constructPath stmts)
+    try = TryCatchPath (_constructPath $ listify tryStmts) eName (_constructPath $ listify (Seq (Assign "exc" (LitI 0)) catchStmts)) (_constructPath stmts)
     excZero = BinopExpr Equal (Var "exc") (LitI 0)
     tryTree = BranchPath excZero Nothing try InvalidPath
     tree = BranchPath (LitB True) Nothing tryTree (EmptyPath (OpNeg excZero))

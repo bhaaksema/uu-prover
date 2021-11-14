@@ -56,7 +56,7 @@ _totalDepth (AnnotedWhilePath _ _ option1 option2) depth = baseDepth + totalDept
 _totalDepth (TryCatchPath option1 _ option2 option3) depth = depth1 * depth2 * depth3
   where
     depth3 = totalDepth option3 depth -- Length of preceding statements
-    depth2 = totalDepth option2 (depth - depth3) -- Length of catch statements
+    depth2 = totalDepth option2 (depth - depth3) - 1 -- Length of catch statements, -1 because we inject a exc:=0 statement
     depth1 = totalDepth option1 (depth - depth3 - depth2) -- Length of try statements
 _totalDepth linpath@LinearPath {} depth = totalDepth linpath depth -- If this function was called directly, this will send a linear path back to the wrapper
 
