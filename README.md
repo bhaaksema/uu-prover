@@ -11,6 +11,8 @@ Make sure you are running a recent version of `stack`, you can always try to upg
 stack upgrade
 ```
 
+While it is possible to use stack to build the tool and the test/benchmark suites, it is not necessary as stack will automatically do so when required.
+
 ## Basic Usage
 ```
 stack run -- [-K <value>] [-file <file>] [-wlp] [-path] [-Hoff] [-noExc]
@@ -29,7 +31,7 @@ stack test
 ```
 
 ## Benchmark Suite
-Uses the Criterion benchmark suite to perform performance measurements on the files in `input/bench/`. It is reccomended to run the benchmarks individually with the following command where `<pattern>` is the name of a file in the mentioned folder.
+Uses the Criterion benchmark suite to perform performance measurements on the files in `input/bench/`. It is recommended to run the benchmarks individually with the following command where `<pattern>` is the name of a file in the mentioned folder.
 ```
 stack bench --benchmark-arguments "<pattern> -m prefix -o <name>.html"
 ```
