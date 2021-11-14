@@ -15,10 +15,22 @@ modProgram (Right (Program name input output stmt)) n = do
   Right (Program name (inp : input) output seq)
 
 _findk :: FilePath -> Int -> Int -> Result
-_findk file n k = unsafePerformIO (verifyProgram (modProgram (unsafePerformIO (parseGCLfile file)) n) (k + 1, file, False, False, True, False))
+_findk file n k =
+  unsafePerformIO
+    ( verifyProgram
+        (modProgram (unsafePerformIO (parseGCLfile file)) n)
+        (k + 1, file, False, False, True, False)
+    )
 
 findk :: FilePath -> Int -> Int
-findk file n = head [if Unsat == _findk file n k then k else head [] | k <- [1 ..], Undef /= _findk file n k]
+findk file n =
+  head
+    [ if Unsat == _findk file n k
+        then k
+        else head []
+      | k <- [1 ..],
+        Undef /= _findk file n k
+    ]
 
 main :: IO ()
 main = do
